@@ -1,10 +1,8 @@
-import Image from "next/image";
-import Login from "./login/page"
-
-export default function Home() {
+export default function HomePage() {
   return (
-    <div>
-      <Login/>
-    </div>
+    <main className="p-8">
+      <h1 className="text-2xl font-bold">Welcome to StyleWhere Home</h1>
+      <p className="mt-2">คุณล็อกอินสำเร็จแล้ว 🎉</p>
+    </main>
   );
 }
