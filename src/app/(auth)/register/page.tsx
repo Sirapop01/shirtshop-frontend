@@ -1,8 +1,10 @@
-// src/app/register/page.tsx
 "use client";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+
+
+import AvatarUploader from "@/components/AvatarUploader";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -39,7 +41,7 @@ export default function RegisterPage() {
     <main className="min-h-screen p-4 md:p-8 bg-gray-50">
       {/* หัวเรื่อง + โลโก้ */}
       <div className="flex flex-col items-center mb-4">
-        <Image src="/logo.png" alt="StyleWhere" width={48} height={48} />
+        <Image src="/logo.png" alt="StyleWhere" width={250} height={100} />
         <h1 className="mt-2 text-xl md:text-2xl font-semibold">Register StyleWhere</h1>
       </div>
 
@@ -49,45 +51,9 @@ export default function RegisterPage() {
           {/* ซ้าย: โปรไฟล์ + อีเมล/พาสเวิร์ด */}
           <section className="space-y-4">
             {/* Avatar สวย ๆ */}
-            <div className="flex flex-col items-center">
-              <label
-                htmlFor="avatar"
-                className="group relative cursor-pointer"
-                title="Upload your picture"
-              >
-                <div className="w-28 h-28 md:w-32 md:h-32 rounded-full border-2 border-dashed border-gray-300 flex items-center justify-center overflow-hidden bg-gray-50 transition-colors group-hover:border-gray-400">
-                  {preview ? (
-                    // แสดงรูปตัวอย่าง
-                    <img src={preview} alt="Preview" className="w-full h-full object-cover" />
-                  ) : (
-                    // ไอคอนผู้ใช้
-                    <svg
-                      width="44"
-                      height="44"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      className="text-gray-400"
-                    >
-                      <path d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5Z" stroke="currentColor" strokeWidth="1.5"/>
-                      <path d="M3 22a9 9 0 0 1 18 0" stroke="currentColor" strokeWidth="1.5"/>
-                    </svg>
-                  )}
-                </div>
-                {/* แถบดำโปร่งบน hover */}
-                <span className="absolute -bottom-2 left-1/2 -translate-x-1/2 text-xs text-gray-600 opacity-80">
-                  Add your picture
-                </span>
-              </label>
-              <input
-                id="avatar"
-                name="avatar"
-                type="file"
-                accept="image/*"
-                onChange={handleAvatarChange}
-                className="sr-only"
-              />
+            <div className="flex justify-center">
+              <AvatarUploader size={136} maxMB={5} />
             </div>
-
             <div className="space-y-3">
               <div>
                 <label className="block mb-1 text-sm">Email</label>
