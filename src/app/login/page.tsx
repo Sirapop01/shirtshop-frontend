@@ -76,7 +76,7 @@ export default function Login() {
                         </a>
                     </div>
 
-                    <button type="submit" className="w-full border p-2 rounded mt-2">
+                    <button type="submit" className="w-full border p-2 rounded mt-2 cursor-pointer">
                         Login
                     </button>
 
@@ -89,13 +89,13 @@ export default function Login() {
 
                     {/* Social / Register */}
                     <div className="flex flex-col items-center space-y-2">
-                        <button type="button" onClick={() =>{router.push("/register")}} className="w-full border py-2 rounded flex items-center justify-center gap-2">
+                        <button type="button" onClick={() =>{router.push("/register")}} className="w-full border py-2 rounded flex items-center justify-center gap-2 cursor-pointer">
                             <span>Register with StyleWhere</span>
                         </button>
-                        <button type="button" className="w-full border py-2 rounded flex items-center justify-center gap-2">
+                        <button type="button" className="w-full border py-2 rounded flex items-center justify-center gap-2 cursor-pointer">
                             <span>Continue with Google</span>
                         </button>
-                        <button type="button" className="w-full border py-2 rounded flex items-center justify-center gap-2">
+                        <button type="button" className="w-full border py-2 rounded flex items-center justify-center gap-2 cursor-pointer">
                             <span>Continue with Facebook</span>
                         </button>
                     </div>
