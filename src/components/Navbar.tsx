@@ -51,7 +51,7 @@ export default function Navbar() {
           <div className="col-span-6 md:col-span-3 flex items-center justify-end gap-2">
             {!user ? (
               <Link
-                href="/auth/login"
+                href="/login"
                 className="rounded border px-3 py-1.5 text-sm hover:bg-gray-50"
               >
                 Login
@@ -108,7 +108,7 @@ export default function Navbar() {
               <Link href="/for-you" className="rounded px-2 py-2 hover:bg-gray-50">For you</Link>
               <Link href="/products" className="rounded px-2 py-2 hover:bg-gray-50">All products</Link>
               {!user && (
-                <Link href="/auth/login" className="rounded px-2 py-2 border text-center mt-1">
+                <Link href="/login" className="rounded px-2 py-2 border text-center mt-1">
                   Login
                 </Link>
               )}
@@ -155,7 +155,7 @@ function ProfileMenu({ firstName, avatarUrl }: { firstName: string; avatarUrl?: 
             onClick={() => {
               // TODO: logout จริง แล้ว redirect
               document.cookie = "token=; Max-Age=0; path=/";
-              window.location.href = "/auth/login";
+              window.location.href = "/login";
             }}
             role="menuitem"
           >

@@ -16,7 +16,7 @@ export default function Login() {
             return;
         }
 
-        router.push("/home");
+        router.push("/");
     };
 
     return (
