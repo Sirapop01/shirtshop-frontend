@@ -21,7 +21,7 @@ export default function Navbar() {
           {/* โลโก้: ชิดซ้าย + ใหญ่ขึ้น */}
           <div className="col-span-6 md:col-span-3 flex items-center gap-3">
             <Link href="/" className="flex items-center gap-2">
-              <Image src="/logo.png" alt="StyleWhere" width={40} height={40} priority />
+              <Image src="/logo.png" alt="StyleWhere" width={96} height={96} priority />
               <span className="text-2xl font-semibold tracking-wide">StyleWhere</span>
             </Link>
           </div>
