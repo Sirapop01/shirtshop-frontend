@@ -1,18 +1,26 @@
-// app/layout.tsx
-import "./globals.css";
-import type { Metadata } from "next";
+import './globals.css';
+import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
+import { AuthProvider } from '@/context/AuthContext'; // ⭐️ 1. Import
+
+const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: "StyleWhere",
-  description: "Shirt shop",
+  title: 'Shirt Shop',
+  description: 'Your one-stop shop for cool shirts.',
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en">
-      <body className="bg-gray-100 text-gray-900">
-        {/* ใส่ Navbar ของเว็บหลักที่นี่ (ถ้ามี) */}
-        {children}
+      <body className={inter.className}>
+        <AuthProvider>
+          {children}
+        </AuthProvider>
       </body>
     </html>
   );

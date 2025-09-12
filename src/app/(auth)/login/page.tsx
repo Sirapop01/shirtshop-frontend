@@ -1,55 +1,129 @@
 "use client";
+
+import SocialButtons from "@/components/SocialButtons";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-/**
- * ENV ที่ต้องมี:
- *  NEXT_PUBLIC_API_BASE = http://localhost:8080/api
- *
- * Backend endpoint (ปรับได้ตามของจริง):
- *  POST /auth/login  body: { email, password }
- *  -> { accessToken, user: { id, email, name, ... }, refreshToken? }
- *
- * NOTE:
- * - โค้ดนี้เก็บ accessToken + user ใน localStorage เพื่อให้ FE เรียก API อื่น ๆ ได้
- * - ถ้า backend ของนายใช้ refresh token แบบ httpOnly cookie ก็ไม่ต้องเก็บ refresh ใน FE
- */
+// สร้าง Type สำหรับ User ให้ตรงกับ UserResponse.java
+type UserResponse = {
+  id: string;
+  email: string;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  displayName?: string;
+  phone?: string;
+  profileImageUrl?: string; // <--- แก้จาก avatarUrl
+  emailVerified?: boolean;
+};
 
+// ใช้ UserResponse Type ที่สร้างขึ้น
 type LoginResponse = {
   accessToken: string;
   refreshToken?: string;
-  user: {
-    id: string;
-    email: string;
-    name: string;
-    role?: "USER" | "ADMIN";
-    avatarUrl?: string;
-  };
+  tokenType?: string;
+  user: UserResponse;
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE;
+const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080/api";
+const API_BASE = RAW_API_BASE.replace(/\/$/, ""); // ป้องกัน / ซ้ำ
 
 export default function Login() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const saveAuth = (data: LoginResponse) => {
-    // เก็บแบบง่าย ๆ ไว้ก่อน (ถ้าอยากปลอดภัยขึ้น แนะนำให้ใช้ httpOnly cookie ฝั่ง backend)
     localStorage.setItem(
       "shirtshop_auth",
       JSON.stringify({
         user: data.user,
         accessToken: data.accessToken,
-        // เก็บ refreshToken เฉพาะกรณีที่ backend ส่งมาเป็น body (ถ้าใช้ cookie ก็ไม่ต้องเก็บ)
         refreshToken: data.refreshToken ?? null,
+        tokenType: data.tokenType ?? "Bearer",
       })
     );
   };
+
+  // ---- Helper: อ่าน token ได้ทั้งจาก hash และ query
+  const readTokensFromLocation = () => {
+    if (typeof window === "undefined") return null;
+
+    // hash: #accessToken=...&refreshToken=...&tokenType=...
+    const hash = window.location.hash?.replace(/^#/, "");
+    const hashParams = new URLSearchParams(hash || "");
+
+    // query: ?accessToken=... (กันกรณี SuccessHandler เผลอส่งแบบ query)
+    const queryParams = new URLSearchParams(window.location.search || "");
+
+    // เปลี่ยนจาก "accessToken" เป็น "token"
+    const token =
+      hashParams.get("token") || queryParams.get("token");
+    const refreshToken =
+      hashParams.get("refreshToken") || queryParams.get("refreshToken") || undefined;
+    const tokenType =
+      hashParams.get("tokenType") ||
+      queryParams.get("tokenType") ||
+      "Bearer";
+
+    // เช็คตัวแปรใหม่
+    if (!token) return null;
+
+    // คืนค่า object ให้มี key ชื่อ accessToken เหมือนเดิมเพื่อให้ส่วนอื่นทำงานต่อได้
+    return { accessToken: token, refreshToken, tokenType };
+  };
+
+  // -- กันยิงซ้ำใน Next dev strict mode
+  const handledRef = useRef(false);
+
+  // --- รองรับ callback จาก Social Login
+  useEffect(() => {
+    if (handledRef.current) return;
+    handledRef.current = true;
+
+    const tokens = readTokensFromLocation();
+    if (!tokens) return;
+
+    (async () => {
+      try {
+        const meRes = await fetch(`${API_BASE}/auth/me`, {
+          headers: { Authorization: `${tokens.tokenType} ${tokens.accessToken}` },
+          cache: "no-store",
+        });
+
+        if (!meRes.ok) {
+          let message = "cannot fetch user profile";
+          try {
+            const j = await meRes.json();
+            message = j?.message || j?.error || message;
+          } catch { }
+          throw new Error(message);
+        }
+
+        const me = await meRes.json();
+
+        saveAuth({
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken,
+          tokenType: tokens.tokenType,
+          user: me,
+        });
+
+        // ลบทั้ง hash และ query ออกจาก URL ให้สะอาด
+        const cleanPath = window.location.pathname;
+        window.history.replaceState({}, document.title, cleanPath);
+
+        router.push("/");
+        router.refresh();
+      } catch (e: any) {
+        console.error(e);
+        setErr("อ่านข้อมูลหลังเข้าสู่ระบบด้วยโซเชียลไม่สำเร็จ");
+      }
+    })();
+  }, [router]);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -60,39 +134,36 @@ export default function Login() {
       return;
     }
 
-    if (!API_BASE) {
-      setErr("ยังไม่ได้ตั้งค่า NEXT_PUBLIC_API_BASE ใน .env.local");
-      return;
-    }
-
     try {
       setLoading(true);
 
       const res = await fetch(`${API_BASE}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),  
+        body: JSON.stringify({ email, password }),
       });
 
       if (!res.ok) {
-        // พยายามอ่านข้อความจาก backend
         let message = "เข้าสู่ระบบไม่สำเร็จ";
         try {
-          const data = await res.json();
-          message = data?.message || message;
-        } catch {
-          // ignore
-        }
+          const d = await res.json();
+          message = d?.message || d?.error || message;
+        } catch { }
         throw new Error(message);
       }
 
       const data = (await res.json()) as LoginResponse;
-      if (!data?.accessToken || !data?.user) {
-        throw new Error("รูปแบบผลลัพธ์จากเซิร์ฟเวอร์ไม่ถูกต้อง");
+      if (!data?.accessToken) throw new Error("รูปแบบผลลัพธ์จากเซิร์ฟเวอร์ไม่ถูกต้อง");
+
+      // ถ้ายังไม่มี user ใน body ให้ดึงจาก /auth/me
+      if (!data.user) {
+        const meRes = await fetch(`${API_BASE}/auth/me`, {
+          headers: { Authorization: `Bearer ${data.accessToken}` },
+        });
+        data.user = meRes.ok ? await meRes.json() : { id: "", email };
       }
 
       saveAuth(data);
-      // ล็อกอินสำเร็จ: ส่งไปหน้าแรก/แดชบอร์ด
       router.push("/");
       router.refresh();
     } catch (error: any) {
@@ -103,28 +174,6 @@ export default function Login() {
   };
 
   const goRegister = () => router.push("/register");
-
-  // ถ้าต้องการ Social Login:
-  // ปกติ Spring Security จะเป็น /oauth2/authorization/google|facebook (ไม่อยู่ใต้ /api)
-  // ให้ตั้งอีกตัวแปร env ถ้าจำเป็น เช่น NEXT_PUBLIC_BACKEND_BASE_OAUTH
-  const handleGoogle = () => {
-    const OAUTH_BASE = process.env.NEXT_PUBLIC_BACKEND_BASE_OAUTH || "";
-    // ถ้า BE ใช้ path นี้ ให้ปล่อยไปได้เลย
-    if (OAUTH_BASE) {
-      window.location.href = `${OAUTH_BASE}/oauth2/authorization/google`;
-    } else {
-      alert("ยังไม่ได้ตั้งค่าเส้นทาง Google OAuth (NEXT_PUBLIC_BACKEND_BASE_OAUTH)");
-    }
-  };
-
-  const handleFacebook = () => {
-    const OAUTH_BASE = process.env.NEXT_PUBLIC_BACKEND_BASE_OAUTH || "";
-    if (OAUTH_BASE) {
-      window.location.href = `${OAUTH_BASE}/oauth2/authorization/facebook`;
-    } else {
-      alert("ยังไม่ได้ตั้งค่าเส้นทาง Facebook OAuth (NEXT_PUBLIC_BACKEND_BASE_OAUTH)");
-    }
-  };
 
   return (
     <div className="grid min-h-screen grid-cols-1 xl:grid-cols-2">
@@ -149,11 +198,8 @@ export default function Login() {
 
           <h1 className="text-2xl font-bold text-center">Login StyleWhere</h1>
 
-          {/* error banner */}
           {err && (
-            <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
-              {err}
-            </div>
+            <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>
           )}
 
           <div>
@@ -198,14 +244,12 @@ export default function Login() {
             {loading ? "Signing in..." : "Login"}
           </button>
 
-          {/* Divider OR */}
           <div className="flex items-center my-4">
             <hr className="flex-grow border-t border-gray-300" />
             <span className="px-3 text-gray-500">OR</span>
             <hr className="flex-grow border-t border-gray-300" />
           </div>
 
-          {/* Social / Register */}
           <div className="flex flex-col items-center space-y-2">
             <button
               type="button"
@@ -214,20 +258,7 @@ export default function Login() {
             >
               <span>Register with StyleWhere</span>
             </button>
-            <button
-              type="button"
-              onClick={handleGoogle}
-              className="w-full border py-2 rounded flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <span>Continue with Google</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleFacebook}
-              className="w-full border py-2 rounded flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <span>Continue with Facebook</span>
-            </button>
+            <SocialButtons />
           </div>
         </form>
       </div>

@@ -7,7 +7,14 @@ export default function StyleGallery({ items }: { items: {id:string; image:strin
       {items.map(i => (
         <figure key={i.id} className="rounded-md overflow-hidden border bg-white">
           <div className="relative w-full aspect-[4/5]">
-            <Image src={i.image} alt={i.title} fill className="object-cover" />
+            <Image 
+              src={i.image} 
+              alt={i.title} 
+              fill 
+              // ⭐️⭐️⭐️ เพิ่มบรรทัดนี้เข้ามา ⭐️⭐️⭐️
+              sizes="(max-width: 768px) 100vw, 33vw"
+              className="object-cover" 
+            />
           </div>
           <figcaption className="p-3 text-sm">{i.title}</figcaption>
         </figure>
