@@ -8,56 +8,94 @@ interface ProductGalleryProps {
   alt: string;
 }
 
-// Component สำหรับแสดงแกลเลอรีรูปภาพ
-export default function ProductGallery({ images, alt }: ProductGalleryProps) {
-  // ถ้าไม่มีรูปภาพ ให้แสดง placeholder
-  if (!images || images.length === 0) {
-    return (
-      <div className="aspect-square w-full relative rounded-lg bg-gray-100">
-        <Image 
-          src="https://placehold.co/600x600/f0f0f0/333?text=No+Image"
-          alt="No image available"
-          fill
-          className="object-cover rounded-lg"
-        />
-      </div>
-    );
-  }
-  
-  // ใช้ State เพื่อเก็บ URL ของรูปภาพหลักที่กำลังแสดงอยู่
-  const [mainImage, setMainImage] = useState(images[0]);
+export default function ProductGallery({ images = [], alt }: ProductGalleryProps) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const activeImage = images[activeIndex] || 'https://placehold.co/600x750?text=No+Image';
+
+  // State สำหรับฟังก์ชันซูม
+  const [zoom, setZoom] = useState(false);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const { left, top, width, height } = e.currentTarget.getBoundingClientRect();
+    const x = ((e.clientX - left) / width) * 100;
+    const y = ((e.clientY - top) / height) * 100;
+    setPosition({ x, y });
+  };
 
   return (
-    <div className="flex flex-col gap-4">
-      {/* รูปภาพหลัก */}
-      <div className="aspect-square w-full relative overflow-hidden rounded-lg">
-        <Image
-          src={mainImage}
-          alt={alt}
-          fill
-          sizes="(max-width: 768px) 100vw, 50vw"
-          className="object-cover transition-transform duration-300 hover:scale-105"
-        />
+    // Container หลักที่เปลี่ยน Layout ตามขนาดหน้าจอ
+    <div className="flex flex-col md:flex-row-reverse md:gap-6">
+      
+      {/* รูปภาพหลัก พร้อมฟังก์ชันซูม */}
+      <div className="flex-1 relative aspect-[4/5] overflow-hidden rounded-lg bg-gray-100 mb-4 md:mb-0">
+        <div
+            className="w-full h-full"
+            onMouseEnter={() => setZoom(true)}
+            onMouseLeave={() => setZoom(false)}
+            onMouseMove={handleMouseMove}
+        >
+            <Image
+                key={activeIndex} // ใช้ key เพื่อ force re-render และให้ transition ทำงานเมื่อเปลี่ยนรูป
+                src={activeImage}
+                alt={alt}
+                fill
+                sizes="(max-width: 768px) 100vw, 75vw"
+                className="object-cover transition-transform duration-300 ease-in-out"
+                style={{
+                    transformOrigin: `${position.x}% ${position.y}%`,
+                    transform: zoom ? 'scale(1.75)' : 'scale(1)',
+                }}
+                onError={(e) => {
+                    e.currentTarget.src = 'https://placehold.co/600x750?text=Image+Error';
+                }}
+            />
+        </div>
       </div>
-      {/* รูปภาพย่อย (Thumbnails) */}
-      <div className="grid grid-cols-5 gap-2">
-        {images.map((imgUrl, index) => (
-          <div
+
+      {/* Thumbnails */}
+      {/* Desktop: แสดงแนวตั้ง */}
+      <div className="hidden md:flex md:flex-col gap-3 w-20">
+        {images.map((image, index) => (
+          <button
             key={index}
-            onClick={() => setMainImage(imgUrl)}
-            className={`aspect-square relative cursor-pointer rounded-md overflow-hidden transition-all ${
-              mainImage === imgUrl ? 'ring-2 ring-offset-2 ring-black' : 'opacity-70 hover:opacity-100'
+            onClick={() => setActiveIndex(index)}
+            className={`flex-shrink-0 w-20 h-20 rounded-lg overflow-hidden border-2 transition-colors ${
+              activeIndex === index ? 'border-black' : 'border-gray-200'
             }`}
           >
-            <Image 
-              src={imgUrl}
+            <Image
+              src={image}
               alt={`${alt} thumbnail ${index + 1}`}
-              fill
-              className="object-cover"
+              width={80}
+              height={80}
+              className="w-full h-full object-cover"
             />
-          </div>
+          </button>
         ))}
       </div>
+      
+      {/* Mobile: แสดงแนวนอน */}
+      <div className="md:hidden flex gap-2 overflow-x-auto pb-2">
+        {images.map((image, index) => (
+          <button
+            key={index}
+            onClick={() => setActiveIndex(index)}
+            className={`flex-shrink-0 w-20 h-20 rounded-lg overflow-hidden border-2 transition-colors ${
+              activeIndex === index ? 'border-black' : 'border-gray-200'
+            }`}
+          >
+            <Image
+              src={image}
+              alt={`${alt} thumbnail ${index + 1}`}
+              width={80}
+              height={80}
+              className="w-full h-full object-cover"
+            />
+          </button>
+        ))}
+      </div>
+
     </div>
   );
 }
