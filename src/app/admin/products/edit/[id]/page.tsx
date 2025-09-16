@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect, FormEvent, ChangeEvent, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useParams } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import Image from "next/image";
 
-// รายการสีและไซส์ทั้งหมดที่มีในร้าน
+/** --- ปรับตามร้านของคุณ --- */
 const ALL_AVAILABLE_COLORS = [
   "Black",
   "White",
@@ -19,13 +19,34 @@ const ALL_AVAILABLE_COLORS = [
   "Beige",
   "Dark Grey",
 ] as const;
+
 const ALL_AVAILABLE_SIZES = ["S", "M", "L", "XL", "XXL"] as const;
 
-/** Types ให้ตรงกับสเปค BE ล่าสุด */
+/** --- Types (ให้ตรงกับ BE ใหม่) --- */
+type ImageInfo = {
+  publicId: string;
+  url: string;
+};
+
 type VariantStock = {
   color: string;
   size: string;
   quantity: number;
+};
+
+type ProductResponse = {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  category: string;
+  imageUrls: string[]; // for backward display only
+  images: ImageInfo[];
+  availableColors: string[];
+  availableSizes: string[];
+  stockQuantity: number; // sum of variantStocks
+  variantStocks: VariantStock[];
+  createdAt: string;
 };
 
 type ProductRequest = {
@@ -35,11 +56,11 @@ type ProductRequest = {
   category: string;
   availableColors: string[];
   availableSizes: string[];
-  stockQuantity: number; // จะคำนวณจาก variantStocks
+  stockQuantity: number; // server จะคำนวณใหม่จาก variantStocks
   variantStocks: VariantStock[];
 };
 
-// helper: ป้องกัน res.json() พัง
+/** helper: ป้องกัน res.json() พัง */
 async function safeJson(res: Response) {
   try {
     return await res.json();
@@ -48,16 +69,25 @@ async function safeJson(res: Response) {
   }
 }
 
-/** สร้าง/อัปเดต matrix (Map สี -> Map ไซส์ -> จำนวน) */
-function buildMatrix(colors: string[], sizes: string[]) {
+/** ตาราง matrix สำหรับคงคลังสี×ไซส์ ใช้ Map 2 ชั้นเพื่อแก้ค่าง่าย */
+function buildMatrix(
+  colors: string[],
+  sizes: string[],
+  variants: VariantStock[] | undefined
+) {
   const map = new Map<string, Map<string, number>>();
   colors.forEach((c) => {
-    const row = new Map<string, number>();
-    sizes.forEach((s) => row.set(s, 0));
-    map.set(c, row);
+    map.set(c, new Map<string, number>());
+    sizes.forEach((s) => map.get(c)!.set(s, 0));
+  });
+  (variants ?? []).forEach(({ color, size, quantity }) => {
+    if (!map.has(color)) map.set(color, new Map<string, number>());
+    if (!map.get(color)!.has(size)) map.get(color)!.set(size, 0);
+    map.get(color)!.set(size, quantity);
   });
   return map;
 }
+
 function matrixToVariants(matrix: Map<string, Map<string, number>>): VariantStock[] {
   const out: VariantStock[] = [];
   for (const [color, row] of matrix.entries()) {
@@ -68,105 +98,113 @@ function matrixToVariants(matrix: Map<string, Map<string, number>>): VariantStoc
   return out;
 }
 
-export default function NewProductPage() {
+export default function EditProductPage() {
   const { isAdmin, token, user } = useAuth();
   const router = useRouter();
+  const params = useParams();
+  const productId = params?.id as string;
 
-  // State สำหรับจัดการ Loading และการป้องกันหน้า
+  /** state หลักแบบเดียวกับหน้า create */
   const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // State สำหรับฟอร์มข้อมูลสินค้า
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [price, setPrice] = useState("");
+  const [price, setPrice] = useState<string>("");
   const [category, setCategory] = useState("T-Shirts");
 
-  // ปรับจากของเดิม: ใช้ availableColors/Sizes + stockMatrix แทน stockQuantity เดี่ยว
-  const [selectedColors, setSelectedColors] = useState<string[]>([]);
-  const [selectedSizes, setSelectedSizes] = useState<string[]>([]);
+  const [availableColors, setAvailableColors] = useState<string[]>([]);
+  const [availableSizes, setAvailableSizes] = useState<string[]>([]);
+
+  /** matrix เก็บคงคลังต่อ color×size */
   const [stockMatrix, setStockMatrix] = useState<Map<string, Map<string, number>>>(
-    () => buildMatrix([], [])
+    () => buildMatrix([], [], [])
   );
+
+  const [existingImages, setExistingImages] = useState<ImageInfo[]>([]);
+  const [markedForRemoval, setMarkedForRemoval] = useState<Set<string>>(new Set());
 
   const [images, setImages] = useState<FileList | null>(null);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
 
-  // State สำหรับแสดงผลลัพธ์
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // กลไกป้องกันหน้า (Protected Route)
+  /** ป้องกันหน้า + เริ่มโหลด */
   useEffect(() => {
     if (user !== undefined) {
-      setIsLoading(false);
       if (!isAdmin) {
         alert("Access Denied. You are not an administrator.");
         router.push("/admin/login");
+        return;
       }
+      void fetchProduct();
     }
-  }, [isAdmin, user, router]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, user]);
 
-  // สร้าง/ล้าง URL ของรูปภาพตัวอย่าง
+  /** โหลดสินค้า */
+  const fetchProduct = async () => {
+    setIsLoading(true);
+    setError("");
+    try {
+      if (!token) throw new Error("Authentication error. Please login again.");
+
+      const res = await fetch(`http://localhost:8080/api/products/${productId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        const err = await safeJson(res);
+        throw new Error(err?.message || `Failed to load product (${res.status})`);
+      }
+      const data = (await res.json()) as ProductResponse;
+
+      setName(data.name ?? "");
+      setDescription(data.description ?? "");
+      setPrice(
+        data.price !== undefined && data.price !== null ? String(data.price) : ""
+      );
+      setCategory(data.category ?? "T-Shirts");
+
+      const initColors = Array.isArray(data.availableColors)
+        ? data.availableColors
+        : [];
+      const initSizes = Array.isArray(data.availableSizes)
+        ? data.availableSizes
+        : [];
+      setAvailableColors(initColors);
+      setAvailableSizes(initSizes);
+
+      setStockMatrix(buildMatrix(initColors, initSizes, data.variantStocks));
+      setExistingImages(Array.isArray(data.images) ? data.images : []);
+    } catch (e: any) {
+      setError(e.message || "Unexpected error while loading product.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /** previews ของภาพใหม่ */
   useEffect(() => {
     if (!images || images.length === 0) {
       setImagePreviews([]);
       return;
     }
-    const newImageUrls: string[] = Array.from(images).map((file) =>
-      URL.createObjectURL(file)
-    );
-    setImagePreviews(newImageUrls);
-
-    // Cleanup: ล้าง URL เก่าเพื่อกัน memory leak
-    return () => newImageUrls.forEach((url) => URL.revokeObjectURL(url));
+    const urls = Array.from(images).map((f) => URL.createObjectURL(f));
+    setImagePreviews(urls);
+    return () => urls.forEach((u) => URL.revokeObjectURL(u));
   }, [images]);
 
-  // เมื่อเซ็ตสี/ไซส์ใหม่ ให้ sync โครงตาราง
+  /** เมื่อ toggles available colors/sizes ให้ sync matrix */
   useEffect(() => {
     setStockMatrix((prev) => {
-      // แปลงค่าจาก prev เก็บไว้ก่อน
-      const prevVariants = matrixToVariants(prev);
-      // สร้าง matrix ตามรายการปัจจุบัน
-      const next = buildMatrix(selectedColors, selectedSizes);
-      // ใส่ค่าที่เคยกรอกไว้กลับไป
-      prevVariants.forEach(({ color, size, quantity }) => {
-        if (next.has(color) && next.get(color)!.has(size)) {
-          next.get(color)!.set(size, quantity);
-        }
-      });
+      const next = buildMatrix(availableColors, availableSizes, matrixToVariants(prev));
       return next;
     });
-  }, [selectedColors, selectedSizes]);
+  }, [availableColors, availableSizes]);
 
-  const handleColorChange = (color: string) => {
-    setSelectedColors((prev) =>
-      prev.includes(color) ? prev.filter((c) => c !== color) : [...prev, color]
-    );
-  };
-
-  const handleSizeChange = (size: string) => {
-    setSelectedSizes((prev) =>
-      prev.includes(size) ? prev.filter((s) => s !== size) : [...prev, size]
-    );
-  };
-
-  const handleQtyChange = (color: string, size: string, val: string) => {
-    const n = Math.max(0, Number(val) || 0);
-    setStockMatrix((prev) => {
-      const next = new Map(prev);
-      const row = new Map(next.get(color) ?? new Map<string, number>());
-      row.set(size, n);
-      next.set(color, row);
-      return next;
-    });
-  };
-
-  const handleImageChange = (e: ChangeEvent<HTMLInputElement>) => {
-    setImages(e.target.files);
-  };
-
-  // totals
+  /** totals */
   const totalByColor = useMemo(() => {
     const t: Record<string, number> = {};
     for (const [color, row] of stockMatrix.entries()) {
@@ -178,19 +216,56 @@ export default function NewProductPage() {
 
   const totalBySize = useMemo(() => {
     const t: Record<string, number> = {};
-    selectedSizes.forEach((s) => (t[s] = 0));
+    for (const size of availableSizes) t[size] = 0;
     for (const [, row] of stockMatrix.entries()) {
       for (const [size, qty] of row.entries()) {
         t[size] = (t[size] || 0) + (Number(qty) || 0);
       }
     }
     return t;
-  }, [stockMatrix, selectedSizes]);
+  }, [stockMatrix, availableSizes]);
 
   const grandTotal = useMemo(
     () => Object.values(totalByColor).reduce((a, b) => a + b, 0),
     [totalByColor]
   );
+
+  /** handlers */
+  const handleImageChange = (e: ChangeEvent<HTMLInputElement>) => {
+    setImages(e.target.files);
+  };
+
+  const toggleRemoveExisting = (publicId: string) => {
+    setMarkedForRemoval((prev) => {
+      const next = new Set(prev);
+      if (next.has(publicId)) next.delete(publicId);
+      else next.add(publicId);
+      return next;
+    });
+  };
+
+  const toggleColor = (color: string) => {
+    setAvailableColors((prev) =>
+      prev.includes(color) ? prev.filter((c) => c !== color) : [...prev, color]
+    );
+  };
+
+  const toggleSize = (size: string) => {
+    setAvailableSizes((prev) =>
+      prev.includes(size) ? prev.filter((s) => s !== size) : [...prev, size]
+    );
+  };
+
+  const setQty = (color: string, size: string, value: string) => {
+    const n = Math.max(0, Number(value) || 0);
+    setStockMatrix((prev) => {
+      const next = new Map(prev);
+      const row = new Map(next.get(color) ?? new Map<string, number>());
+      row.set(size, n);
+      next.set(color, row);
+      return next;
+    });
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -210,70 +285,70 @@ export default function NewProductPage() {
       setError("Please provide a valid price.");
       return;
     }
-    if (selectedColors.length === 0 || selectedSizes.length === 0) {
-      setError("Please select at least one color and one size.");
+
+    if (availableColors.length === 0 || availableSizes.length === 0) {
+      setError("Please select at least one color and size.");
       return;
     }
 
     setIsSubmitting(true);
-
-    // สร้าง variantStocks จาก matrix
-    const variants = matrixToVariants(stockMatrix);
-    const productData: ProductRequest = {
-      name,
-      description,
-      price: parseFloat(price),
-      category,
-      availableColors: selectedColors,
-      availableSizes: selectedSizes,
-      stockQuantity: variants.reduce((a, v) => a + (Number(v.quantity) || 0), 0),
-      variantStocks: variants,
-    };
-
-    const formData = new FormData();
-    formData.append(
-      "product",
-      new Blob([JSON.stringify(productData)], { type: "application/json" })
-    );
-
-    if (images) {
-      for (let i = 0; i < images.length; i++) {
-        formData.append("images", images[i]);
-      }
-    }
-
     try {
-      const res = await fetch("http://localhost:8080/api/products", {
-        method: "POST",
+      const variants = matrixToVariants(stockMatrix);
+      const payload: ProductRequest = {
+        name,
+        description,
+        price: parseFloat(price),
+        category,
+        availableColors,
+        availableSizes,
+        stockQuantity: variants.reduce((a, v) => a + (Number(v.quantity) || 0), 0),
+        variantStocks: variants,
+      };
+
+      const formData = new FormData();
+      formData.append(
+        "product",
+        new Blob([JSON.stringify(payload)], { type: "application/json" })
+      );
+
+      if (images && images.length > 0) {
+        for (let i = 0; i < images.length; i++) {
+          formData.append("images", images[i]);
+        }
+      }
+
+      const removeIds = Array.from(markedForRemoval);
+      if (removeIds.length > 0) {
+        formData.append(
+          "removeImagePublicIds",
+          new Blob([JSON.stringify(removeIds)], { type: "application/json" })
+        );
+      }
+
+      const res = await fetch(`http://localhost:8080/api/products/${productId}`, {
+        method: "PUT",
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
       });
 
       if (!res.ok) {
-        const errorData = await safeJson(res);
-        throw new Error(errorData?.message || `Error: ${res.statusText}`);
+        const err = await safeJson(res);
+        throw new Error(err?.message || `Update failed (${res.status})`);
       }
 
-      setSuccessMessage("Product created successfully!");
-
-      // เคลียร์ฟอร์ม
-      setName("");
-      setDescription("");
-      setPrice("");
-      setCategory("T-Shirts");
-
-      setSelectedColors([]);
-      setSelectedSizes([]);
-      setStockMatrix(buildMatrix([], []));
-
+      setSuccessMessage("Product updated successfully!");
+      // refresh เพื่อสะท้อนของจริงจาก BE
+      await fetchProduct();
+      // reset ไฟล์ใหม่
       setImages(null);
+      setImagePreviews([]);
       const fileInput = document.querySelector(
         'input[type="file"]'
       ) as HTMLInputElement | null;
       if (fileInput) fileInput.value = "";
-      setImagePreviews([]);
+      setMarkedForRemoval(new Set());
     } catch (err: any) {
-      setError(`Failed to create product: ${err.message}`);
+      setError(`Failed to update product: ${err.message}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -281,21 +356,17 @@ export default function NewProductPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        Loading...
-      </div>
+      <div className="min-h-screen flex items-center justify-center">Loading...</div>
     );
   }
 
-  if (!isAdmin) {
-    return null;
-  }
+  if (!isAdmin) return null;
 
   return (
     <div className="bg-gray-50 min-h-screen">
       <div className="max-w-5xl mx-auto p-4 md:p-8">
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold text-gray-800">Add New Product</h1>
+          <h1 className="text-3xl font-bold text-gray-800">Edit Product</h1>
           <button
             onClick={() => router.push("/")}
             className="text-sm text-blue-600 hover:underline"
@@ -308,6 +379,7 @@ export default function NewProductPage() {
           onSubmit={handleSubmit}
           className="p-8 bg-white rounded-lg shadow-md space-y-8"
         >
+          {/* Basic fields */}
           <div>
             <label className="block text-gray-700 font-medium mb-1">
               Product Name
@@ -381,8 +453,8 @@ export default function NewProductPage() {
                   >
                     <input
                       type="checkbox"
-                      checked={selectedColors.includes(color)}
-                      onChange={() => handleColorChange(color)}
+                      checked={availableColors.includes(color)}
+                      onChange={() => toggleColor(color)}
                       className="h-4 w-4 rounded border-gray-300 text-black focus:ring-black"
                     />
                     <span>{color}</span>
@@ -403,8 +475,8 @@ export default function NewProductPage() {
                   >
                     <input
                       type="checkbox"
-                      checked={selectedSizes.includes(size)}
-                      onChange={() => handleSizeChange(size)}
+                      checked={availableSizes.includes(size)}
+                      onChange={() => toggleSize(size)}
                       className="h-4 w-4 rounded border-gray-300 text-black focus:ring-black"
                     />
                     <span>{size}</span>
@@ -414,7 +486,7 @@ export default function NewProductPage() {
             </div>
           </div>
 
-          {/* ตารางคงคลัง: สี × ไซส์ */}
+          {/* Variant Stock Matrix */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="block text-gray-700 font-bold">
@@ -431,7 +503,7 @@ export default function NewProductPage() {
                 <thead className="bg-gray-100">
                   <tr>
                     <th className="p-2 border">Color \\ Size</th>
-                    {selectedSizes.map((s) => (
+                    {availableSizes.map((s) => (
                       <th key={s} className="p-2 border text-center">
                         {s}
                       </th>
@@ -440,16 +512,16 @@ export default function NewProductPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {selectedColors.map((c) => (
+                  {availableColors.map((c) => (
                     <tr key={c} className="odd:bg-white even:bg-gray-50">
                       <td className="p-2 border font-medium">{c}</td>
-                      {selectedSizes.map((s) => (
+                      {availableSizes.map((s) => (
                         <td key={s} className="p-2 border">
                           <input
                             type="number"
                             min={0}
                             value={stockMatrix.get(c)?.get(s) ?? 0}
-                            onChange={(e) => handleQtyChange(c, s, e.target.value)}
+                            onChange={(e) => setQty(c, s, e.target.value)}
                             className="w-20 p-1 border rounded-md"
                           />
                         </td>
@@ -463,24 +535,62 @@ export default function NewProductPage() {
                 <tfoot>
                   <tr className="bg-gray-100">
                     <th className="p-2 border text-right">Col Total</th>
-                    {selectedSizes.map((s) => (
+                    {availableSizes.map((s) => (
                       <th key={s} className="p-2 border text-center">
                         {totalBySize[s]?.toLocaleString() ?? 0}
                       </th>
                     ))}
-                    <th className="p-2 border text-center">
-                      {grandTotal.toLocaleString()}
-                    </th>
+                    <th className="p-2 border text-center">{grandTotal.toLocaleString()}</th>
                   </tr>
                 </tfoot>
               </table>
             </div>
           </div>
 
-          {/* รูปสินค้า */}
+          {/* ภาพเดิม */}
+          {existingImages.length > 0 && (
+            <div>
+              <label className="block text-gray-700 font-medium mb-1">
+                Existing Images (click to mark for removal)
+              </label>
+              <div className="mt-2 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-4">
+                {existingImages.map((img) => {
+                  const isRemoved = markedForRemoval.has(img.publicId);
+                  return (
+                    <button
+                      type="button"
+                      key={img.publicId}
+                      onClick={() => toggleRemoveExisting(img.publicId)}
+                      className={`relative w-full aspect-square rounded-lg overflow-hidden border ${
+                        isRemoved ? "ring-4 ring-red-500" : ""
+                      }`}
+                      title={
+                        isRemoved ? "Will be removed" : "Click to remove this image"
+                      }
+                    >
+                      <Image
+                        src={img.url}
+                        alt="Existing"
+                        fill
+                        sizes="100px"
+                        className={`object-cover ${isRemoved ? "opacity-50" : ""}`}
+                      />
+                      {isRemoved && (
+                        <span className="absolute inset-0 flex items-center justify-center text-white font-semibold text-sm bg-black/40">
+                          Remove
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* เพิ่มภาพใหม่ */}
           <div>
             <label className="block text-gray-700 font-medium mb-1">
-              Product Images
+              Add New Images
             </label>
             <input
               type="file"
@@ -494,7 +604,7 @@ export default function NewProductPage() {
           {imagePreviews.length > 0 && (
             <div>
               <label className="block text-gray-700 font-medium mb-1">
-                Image Preview
+                New Image Preview
               </label>
               <div className="mt-2 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-4">
                 {imagePreviews.map((previewUrl, index) => (
@@ -531,7 +641,7 @@ export default function NewProductPage() {
               disabled={isSubmitting}
               className="w-full px-6 py-3 bg-black text-white rounded-lg font-bold text-lg hover:bg-gray-800 transition-colors disabled:opacity-60"
             >
-              {isSubmitting ? "Creating..." : "Create Product"}
+              {isSubmitting ? "Saving..." : "Save Changes"}
             </button>
           </div>
         </form>

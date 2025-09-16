@@ -18,18 +18,11 @@ const CATEGORY_ORDER = [
   "Accessories",
 ] as const;
 
-// --- เพิ่มเข้ามา ---
-/** จำนวนสินค้าสูงสุดที่จะแสดงในแต่ละหมวดหมู่ในหน้านี้ */
-const PRODUCTS_PER_CATEGORY_LIMIT = 8;
-// ---------------
-
 /** ตัดซ้ำ: ใช้ ชื่อ+ราคา+หมวด เป็น key */
 const dedupeProducts = (products: Product[]) => {
   const seen = new Set<string>();
   return products.filter((p) => {
-    const key = `${(p.name || "").trim().toLowerCase()}|${p.price}|${(
-      p.category || ""
-    ).trim().toLowerCase()}`;
+    const key = `${(p.name || "").trim().toLowerCase()}|${p.price}|${(p.category || "").trim().toLowerCase()}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -83,33 +76,12 @@ export default async function AllProductsPage() {
 
       {categoryKeys.length > 0 ? (
         <div className="space-y-12">
-          {categoryKeys.map((category) => {
-            // --- เพิ่มเข้ามา ---
-            const allProductsInCategory = grouped[category];
-            const totalProducts = allProductsInCategory.length;
-            const displayedProducts = allProductsInCategory.slice(0, PRODUCTS_PER_CATEGORY_LIMIT);
-            const hasMoreProducts = totalProducts > PRODUCTS_PER_CATEGORY_LIMIT;
-            // ----------------
-
-            return (
-              <section key={category}>
-                {/* --- แก้ไขส่วนนี้ --- */}
-                <div className="flex justify-between items-baseline mb-4">
-                  <SectionTitle>{category}</SectionTitle>
-                  {hasMoreProducts && (
-                    <Link
-                      href={`/category/${encodeURIComponent(category.toLowerCase())}`}
-                      className="text-sm font-medium text-blue-600 hover:text-blue-500"
-                    >
-                      See all <span aria-hidden="true">&rarr;</span>
-                    </Link>
-                  )}
-                </div>
-                <ProductGrid items={displayedProducts} />
-                {/* ----------------- */}
-              </section>
-            );
-          })}
+          {categoryKeys.map((category) => (
+            <section key={category}>
+              <SectionTitle>{category}</SectionTitle>
+              <ProductGrid items={grouped[category]} />
+            </section>
+          ))}
         </div>
       ) : (
         <div className="text-center py-12">
