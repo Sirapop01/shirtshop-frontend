@@ -1,7 +1,7 @@
 import { getProducts } from "@/lib/data";
 import { Product } from "@/types";
-import SectionTitle from "@/components/SectionTitle";
-import ProductGrid from "@/components/ProductGrid";
+import SectionTitle from "@/components/shared/SectionTitle";
+import ProductGrid from "@/components/product/ProductGrid";
 import Link from "next/link";
 
 /** ปิด cache เพจนี้ (App Router) */

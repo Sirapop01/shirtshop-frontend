@@ -1,6 +1,6 @@
 "use client";
 
-import SocialButtons from "@/components/SocialButtons";
+import SocialButtons from "@/components/auth/SocialButtons";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";

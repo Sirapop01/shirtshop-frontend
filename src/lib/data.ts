@@ -1,87 +1,82 @@
 // lib/data.ts
-import { Product } from "@/types";
+import { Product, ImageInfo, VariantStock } from "@/types";
 
-/**
- * ใช้ BASE URL จาก env (สำหรับ Server-side เท่านั้น)
- * - ใส่ใน .env.local: API_BASE=http://localhost:8080
- */
 const API_BASE = process.env.API_BASE || "http://localhost:8080";
-
 const api = (path: string) => `${API_BASE}${path}`;
 
-/** ปรับรูปแบบข้อมูลให้ FE ใช้งานได้เสมอ (กันกรณี BE ส่ง field ไม่ครบ/ต่างเวอร์ชัน) */
+
+const toNumber = (v: unknown, fallback = 0) => {
+  const n = typeof v === "number" ? v : v != null ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : fallback;
+};
+
 function normalizeProduct(raw: any): Product {
-  // รูป: รองรับได้ทั้ง imageUrls (เก่า) และ images [{url}] (ใหม่)
+  // รูป: รองรับทั้ง imageUrls [] และ images [{url}]
   const imageUrls: string[] =
     Array.isArray(raw?.imageUrls) && raw.imageUrls.length > 0
       ? raw.imageUrls
       : Array.isArray(raw?.images)
-      ? raw.images.map((i: any) => i?.url).filter(Boolean)
+      ? (raw.images as any[]).map((i) => i?.url).filter(Boolean)
       : [];
 
-  // ราคา: บางทีจาก DB อาจเป็น string -> แปลงเป็น number
-  const priceNum =
-    typeof raw?.price === "number"
-      ? raw.price
-      : raw?.price != null
-      ? Number(raw.price)
-      : 0;
+  // images (object)
+  const images: ImageInfo[] = Array.isArray(raw?.images)
+    ? (raw.images as any[])
+        .map((i) => ({
+          publicId: i?.publicId ?? "",
+          url: i?.url ?? "",
+        }))
+        .filter((i) => i.url)
+    : [];
+
+  // variantStocks
+  const variantStocks: VariantStock[] = Array.isArray(raw?.variantStocks)
+    ? (raw.variantStocks as any[]).map((v) => ({
+        color: `${v?.color ?? ""}`.trim(),
+        size: `${v?.size ?? ""}`.trim(),
+        quantity: toNumber(v?.quantity, 0),
+      }))
+    : [];
 
   return {
     id: raw?.id ?? raw?._id ?? "",
     name: raw?.name ?? "",
     description: raw?.description ?? "",
-    price: Number.isFinite(priceNum) ? priceNum : 0,
+    price: toNumber(raw?.price, 0),
     category: raw?.category ?? "Uncategorized",
     imageUrls,
-    availableColors: raw?.availableColors ?? [],
-    availableSizes: raw?.availableSizes ?? [],
-    stockQuantity:
-      typeof raw?.stockQuantity === "number"
-        ? raw.stockQuantity
-        : Number(raw?.stockQuantity) || 0,
-    createdAt: raw?.createdAt ?? raw?.created_at ?? undefined,
-  } as Product;
+    images,                 // ✅ ใส่คืน
+    variantStocks,          // ✅ ใส่คืน
+    availableColors: Array.isArray(raw?.availableColors) ? raw.availableColors : [],
+    availableSizes: Array.isArray(raw?.availableSizes) ? raw.availableSizes : [],
+    stockQuantity: toNumber(raw?.stockQuantity, 0),
+    createdAt: raw?.createdAt ?? raw?.created_at ?? "",
+  };
 }
 
-/** ดึงสินค้าทั้งหมด (สดใหม่ทุกครั้ง ไม่ติด cache) */
+/** ดึงสินค้าทั้งหมด */
 export async function getProducts(): Promise<Product[]> {
   try {
-    const res = await fetch(api("/api/products"), {
-      // cache: "no-store" เพียงพอสำหรับการไม่แคช
-      cache: "no-store", 
-    });
-
-    if (!res.ok) {
-      throw new Error(`Failed to fetch products: ${res.status}`);
-    }
-
+    const res = await fetch(api("/api/products"), { cache: "no-store" });
+    if (!res.ok) throw new Error(`Failed to fetch products: ${res.status}`);
     const data = await res.json();
-    if (!Array.isArray(data)) return [];
-
-    return data.map(normalizeProduct);
-  } catch (error) {
-    console.error("[getProducts] Error:", error);
+    return Array.isArray(data) ? data.map(normalizeProduct) : [];
+  } catch (err) {
+    console.error("[getProducts] Error:", err);
     return [];
   }
 }
 
-/** ดึงสินค้าแบบรายตัว (สดใหม่ทุกครั้ง) */
+/** ดึงสินค้าแบบรายตัว */
 export async function getProductById(id: string): Promise<Product | null> {
   try {
-    const res = await fetch(api(`/api/products/${id}`), {
-      cache: "no-store",
-    });
-
+    const res = await fetch(api(`/api/products/${id}`), { cache: "no-store" });
     if (res.status === 404) return null;
-    if (!res.ok) {
-      throw new Error(`Failed to fetch product ${id}: ${res.status}`);
-    }
-
+    if (!res.ok) throw new Error(`Failed to fetch product ${id}: ${res.status}`);
     const raw = await res.json();
     return normalizeProduct(raw);
-  } catch (error) {
-    console.error("[getProductById] Error:", error);
+  } catch (err) {
+    console.error("[getProductById] Error:", err);
     return null;
   }
 }
