@@ -17,7 +17,7 @@ export default function ProductCard({ product }: ProductCardProps) {
   };
 
   return (
-    <Link href={`/product/${product.id}`} className="group block overflow-hidden">
+    <Link href={`/products/${product.id}`} className="group block overflow-hidden">
       
       {/* ⭐️ 1. แก้ไข Container ของรูปภาพ */}
       {/* - ลบคลาส h-[350px] sm:h-[450px] ออก */}

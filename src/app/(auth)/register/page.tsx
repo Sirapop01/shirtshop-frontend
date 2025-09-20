@@ -3,9 +3,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
-import AvatarUploader from "@/components/AvatarUploader";
-import api from "@/lib/api";
-import { uploadAvatar } from "@/lib/upload";
+import AvatarUploader from "@/components/shared/AvatarUploader";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -38,30 +36,41 @@ export default function RegisterPage() {
 
     setSubmitting(true);
     try {
-      // 1) upload avatar (optional)
-      let avatarUrl = "";
-      const avatarFile = (fd.get("avatar") as File) || null;
-      if (avatarFile && avatarFile.size > 0) {
-        const uploaded = await uploadAvatar(avatarFile);
-        avatarUrl = uploaded.url;
-      }
-
-      // 2) payload
+      // 1) เตรียม JSON ส่วนข้อมูลผู้ใช้
       const firstName = String(fd.get("firstName") || "");
       const lastName = String(fd.get("lastName") || "");
-      const payload = {
+      const registerPayload = {
         email: String(fd.get("email") || ""),
         password,
         displayName: `${firstName} ${lastName}`.trim(),
         firstName,
         lastName,
         phone: String(fd.get("tel") || ""),
-        avatarUrl,
       };
 
-      const { data } = await api.post("/auth/register", payload);
+      // 2) สร้าง FormData ใหม่ แล้วใส่ JSON + ไฟล์ (avatar)
+      const form = new FormData();
+      form.append(
+        "request",
+        new Blob([JSON.stringify(registerPayload)], { type: "application/json" })
+      );
 
-      // 3) auto-login (ถ้า BE ส่ง token กลับมา)
+      const avatarFile = (fd.get("avatar") as File) || null; // <<< ต้องมี name="avatar"
+      if (avatarFile && avatarFile.size > 0) {
+        form.append("avatar", avatarFile);
+      }
+
+      // 3) ส่งไป BE
+      const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080/api";
+      const res = await fetch(`${API_BASE}/auth/register`, {
+        method: "POST",
+        body: form, // อย่าตั้ง Content-Type เอง ให้ browser จัดการ boundary
+      });
+
+      if (!res.ok) throw new Error(await res.text().catch(() => "Register failed"));
+      const data = await res.json();
+
+      // 4) auto-login ถ้า BE คืน token+user
       if (data?.accessToken && data?.user) {
         localStorage.setItem(
           "shirtshop_auth",
@@ -69,25 +78,23 @@ export default function RegisterPage() {
             user: data.user,
             accessToken: data.accessToken,
             refreshToken: data?.refreshToken ?? null,
+            tokenType: data?.tokenType ?? "Bearer",
           })
         );
         setOk("สมัครสมาชิกสำเร็จ! กำลังเข้าสู่ระบบ...");
-        setTimeout(() => {
-          router.push("/");
-          router.refresh();
-        }, 600);
+        setTimeout(() => { router.push("/"); router.refresh(); }, 600);
       } else {
         setOk(data?.message || "สมัครสมาชิกสำเร็จ! โปรดเข้าสู่ระบบ");
         setTimeout(() => router.push("/login"), 1000);
       }
     } catch (err: any) {
-      const msg =
-        err?.response?.data?.message || err?.message || "สมัครสมาชิกไม่สำเร็จ";
-      setError(msg);
+      setError(err?.message || "สมัครสมาชิกไม่สำเร็จ");
     } finally {
       setSubmitting(false);
     }
   }
+
+
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-gray-50 to-white py-8 px-4">
@@ -183,8 +190,8 @@ export default function RegisterPage() {
                             strength < 2
                               ? "#ef4444"
                               : strength < 4
-                              ? "#f59e0b"
-                              : "#10b981",
+                                ? "#f59e0b"
+                                : "#10b981",
                         }}
                       />
                     </div>
@@ -255,6 +262,7 @@ export default function RegisterPage() {
                     <input
                       id="tel"
                       name="tel"
+                      maxLength={10}
                       placeholder="095-xxx-xxxx"
                       inputMode="tel"
                       pattern="^0[0-9\- ]{8,}$"

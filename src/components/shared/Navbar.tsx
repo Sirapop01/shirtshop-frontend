@@ -4,6 +4,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
+import { useCart } from "@/context/CartContext";
 
 const AUTH_KEY = "shirtshop_auth";
 
@@ -26,6 +27,10 @@ export default function Navbar() {
   const [openMenu, setOpenMenu] = useState(false);     // popover ใต้ปุ่มสามขีด
 
   const menuBtnRef = useRef<HTMLButtonElement | null>(null);
+
+
+  const { items } = useCart();
+  const cartCount = items.reduce((sum, i) => sum + i.quantity, 0);
 
   // mount + sync login state
   useEffect(() => {
@@ -131,14 +136,22 @@ export default function Navbar() {
               </>
             ) : (
               <>
-                {/* ตะกร้า */}
+                {/* ✅ ตะกร้า + badge */}
                 <Link
                   href="/cart"
-                  className="inline-flex items-center justify-center rounded border px-2 py-1"
-                  aria-label="Cart"
+                  className="inline-flex items-center justify-center rounded border px-2 py-1 relative"
+                  aria-label={`Cart${cartCount ? `, ${cartCount} items` : ""}`}
                   title="Cart"
                 >
                   <IconCart />
+                  {cartCount > 0 && (
+                    <span
+                      className="absolute -top-2 -right-2 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[10px] leading-[18px] text-center font-semibold shadow"
+                      aria-hidden="true"
+                    >
+                      {cartCount > 99 ? "99+" : cartCount}
+                    </span>
+                  )}
                 </Link>
 
                 {/* ปุ่มสามขีด -> popover */}
