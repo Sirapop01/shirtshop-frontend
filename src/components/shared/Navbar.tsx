@@ -5,42 +5,23 @@ import Link from "next/link";
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { useCart } from "@/context/CartContext";
-
-const AUTH_KEY = "shirtshop_auth";
-
-function readIsLoggedIn(): boolean {
-  try {
-    const raw = localStorage.getItem(AUTH_KEY);
-    if (!raw) return false;
-    const obj = JSON.parse(raw);
-    return !!obj?.accessToken;
-  } catch {
-    return false;
-  }
-}
+import { useAuth } from "@/context/AuthContext"; // ✅ ใช้ Context
 
 export default function Navbar() {
   const [mounted, setMounted] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-
-  const [openMobile, setOpenMobile] = useState(false); // drawer (mobile)
-  const [openMenu, setOpenMenu] = useState(false);     // popover ใต้ปุ่มสามขีด
-
+  const [openMobile, setOpenMobile] = useState(false);
+  const [openMenu, setOpenMenu] = useState(false);
   const menuBtnRef = useRef<HTMLButtonElement | null>(null);
-
 
   const { items } = useCart();
   const cartCount = items.reduce((sum, i) => sum + i.quantity, 0);
 
-  // mount + sync login state
+  // ✅ ดึงสถานะจาก AuthContext
+  const { user, logout, authLoading } = useAuth();
+  const isLoggedIn = !!user;
+
   useEffect(() => {
     setMounted(true);
-    setIsLoggedIn(readIsLoggedIn());
-
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === AUTH_KEY) setIsLoggedIn(readIsLoggedIn());
-    };
-    window.addEventListener("storage", onStorage);
 
     // click outside ปิด popover
     const onClickOutside = (e: MouseEvent) => {
@@ -69,7 +50,6 @@ export default function Navbar() {
     window.addEventListener("resize", onResize);
 
     return () => {
-      window.removeEventListener("storage", onStorage);
       document.removeEventListener("click", onClickOutside);
       document.removeEventListener("keydown", onKey);
       window.removeEventListener("resize", onResize);
@@ -92,7 +72,6 @@ export default function Navbar() {
           {/* โลโก้ซ้าย */}
           <div className="col-span-6 md:col-span-3 flex items-center gap-3">
             <Link href="/" className="flex items-center gap-2" aria-label="StyleWhere home">
-              {/* กล่องกำหนดขนาด (responsive) */}
               <div className="relative h-8 w-[120px] md:h-9 md:w-[140px]">
                 <Image
                   src="/logo.png"
@@ -108,6 +87,7 @@ export default function Navbar() {
               </span>
             </Link>
           </div>
+
           {/* Search กลาง (desktop only) */}
           <div className="col-span-12 md:col-span-6 hidden md:flex justify-center">
             <SearchBox />
@@ -115,7 +95,10 @@ export default function Navbar() {
 
           {/* ปุ่มขวา */}
           <div className="col-span-6 md:col-span-3 flex items-center justify-end gap-2 relative">
-            {!isLoggedIn ? (
+            {/* ขณะกำลังเช็ค auth */}
+            {authLoading ? (
+              <div className="h-8 w-28 rounded bg-gray-100 animate-pulse" aria-hidden />
+            ) : !isLoggedIn ? (
               <>
                 <Link
                   href="/login"
@@ -136,7 +119,7 @@ export default function Navbar() {
               </>
             ) : (
               <>
-                {/* ✅ ตะกร้า + badge */}
+                {/* ตะกร้า + badge */}
                 <Link
                   href="/cart"
                   className="inline-flex items-center justify-center rounded border px-2 py-1 relative"
@@ -195,10 +178,8 @@ export default function Navbar() {
                           type="button"
                           className="block w-full text-lg hover:opacity-80"
                           onClick={() => {
-                            localStorage.removeItem(AUTH_KEY);
                             setOpenMenu(false);
-                            setIsLoggedIn(false);
-                            window.location.href = "/";
+                            logout(); // ✅ ใช้ logout จาก Context แทนลบ localStorage เอง
                           }}
                         >
                           Log Out
@@ -227,14 +208,12 @@ export default function Navbar() {
         {/* Drawer มือถือ */}
         {openMobile && (
           <>
-            {/* Overlay */}
             <button
               type="button"
               className="fixed inset-0 bg-black/25 z-40"
               onClick={() => setOpenMobile(false)}
               aria-hidden="true"
             />
-            {/* Drawer */}
             <aside
               className="fixed right-0 top-0 h-screen w-[88%] max-w-sm bg-white border-l z-50 shadow-xl p-3 flex flex-col"
               role="dialog"
