@@ -17,7 +17,7 @@ interface CartContextType {
   subTotal: number;
   refresh: () => Promise<void>;
   addItem: (i: CartItem) => Promise<void>;
-  updateItem: (i: {productId:string;color:string;size:string;quantity:number}) => Promise<void>;
+  updateItem: (i: { productId: string; color: string; size: string; quantity: number }) => Promise<void>;
   removeItem: (productId: string, color: string, size: string) => Promise<void>;
   clearCart: () => Promise<void>;
 }
@@ -26,22 +26,19 @@ const CartContext = createContext<CartContextType | undefined>(undefined);
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
-// --- helpers ---------------------------------------------------------------
-function readAuthFromLocal() {
-  try {
-    const raw = typeof window !== "undefined" ? localStorage.getItem("shirtshop_auth") : null;
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+// ---- helpers ---------------------------------------------------------------
+const ACCESS_TOKEN_KEY = "accessToken";
+
+function getAccessToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return sessionStorage.getItem(ACCESS_TOKEN_KEY) || localStorage.getItem(ACCESS_TOKEN_KEY);
 }
 
 function getAuthHeader() {
-  const auth = readAuthFromLocal();
-  const token = auth?.accessToken || auth?.token || "";
-  const type  = auth?.tokenType || "Bearer";
-  return token ? `${type} ${token}` : "";
+  const token = getAccessToken();
+  return token ? `Bearer ${token}` : "";
 }
+
 
 async function authFetch(url: string, init?: RequestInit) {
   const headers = new Headers(init?.headers || {});
@@ -53,7 +50,8 @@ async function authFetch(url: string, init?: RequestInit) {
 
   return fetch(url, { ...init, headers, cache: "no-store" });
 }
-// --------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 
 
 export function CartProvider({ children }: { children: ReactNode }) {
@@ -61,6 +59,13 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [subTotal, setSubTotal] = useState(0);
 
   const refresh = async () => {
+    // ถ้ายังไม่ login ก็ไม่ต้องยิง
+    if (!getAccessToken()) {
+      setItems([]);
+      setSubTotal(0);
+      return;
+    }
+
     const res = await authFetch(`${API}/api/cart`, { method: "GET" });
     if (!res.ok) {
       console.error("[cart] GET /api/cart failed", res.status, await res.text());
@@ -95,7 +100,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     await refresh();
   };
 
-  const updateItem = async (i: {productId:string;color:string;size:string;quantity:number}) => {
+  const updateItem = async (i: { productId: string; color: string; size: string; quantity: number }) => {
     const res = await authFetch(`${API}/api/cart/items`, {
       method: "PUT",
       body: JSON.stringify(i),
