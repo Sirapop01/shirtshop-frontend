@@ -6,57 +6,41 @@ import { useAuth } from '@/context/AuthContext'; // นำเข้า useAuth
 import Image from 'next/image';
 
 export default function AdminLoginPage() {
-  const [email, setEmail] = useState('admin@gmail.com');
-  const [password, setPassword] = useState('admin1234');
-  const [rememberMe, setRememberMe] = useState(true); // สถานะ Remember Me
+  const [email, setEmail] = useState("admin@gmail.com");
+  const [password, setPassword] = useState("admin1234");
+  const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-
-  // ดึงสถานะจาก AuthContext
+  const [error, setError] = useState("");
   const { login, isAdmin, authLoading } = useAuth();
   const router = useRouter();
 
-  // useEffect สำหรับตรวจสอบและ redirect ถ้าเป็น Admin อยู่แล้ว
+  // ✅ redirect เฉพาะเมื่อ authLoading เสร็จแล้ว และเป็น admin จริง
   useEffect(() => {
-    // รอจนกว่า AuthContext จะตรวจสอบสถานะเสร็จสิ้น
-    if (!authLoading) {
-      if (isAdmin) {
-        // ถ้าเป็น Admin แล้ว ให้ redirect ไปหน้า Admin Products
-        router.replace('/admin/products');
-      }
-      // ถ้าไม่ใช่ Admin ก็ปล่อยให้อยู่ที่หน้า Login นี้
+    if (!authLoading && isAdmin) {
+      router.replace("/admin/dashboard");
     }
-  }, [authLoading, isAdmin, router]); // Dependency array
+  }, [authLoading, isAdmin, router]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    setError('');
+    setError("");
     setLoading(true);
-
     try {
-      const res = await fetch('http://localhost:8080/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, rememberMe }), // ส่ง rememberMe ไป Backend
+      const res = await fetch("http://localhost:8080/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, rememberMe }),
       });
-
       const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Login failed.");
 
-      if (!res.ok) {
-        throw new Error(data.message || 'Login failed. Please check your credentials.');
+      if (!data.user || !data.user.roles?.includes("ADMIN")) {
+        throw new Error("Access Denied. You are not an administrator.");
       }
 
-      // ตรวจสอบ role ของ user ที่ล็อกอินเข้ามา
-      if (!data.user || !data.user.roles.includes('ADMIN')) {
-        throw new Error('Access Denied. You are not an administrator.');
-      }
-
-      // เรียกใช้ฟังก์ชัน login จาก AuthContext ซึ่งจะจัดการการบันทึก Token และอัปเดตสถานะทั้งหมด
+      // ตั้ง state ใน Context ให้ครบก่อน แล้วพาไป dashboard ตรง ๆ
       login(data.accessToken, data.refreshToken, data.user, rememberMe);
-
-      // ส่งไปที่หน้า Gatekeeper (/admin) เพื่อให้มันจัดการ redirect ไปยัง /admin/products ต่อไป
-      router.push('/admin');
-
+      router.replace("/admin/dashboard"); // ❗ ไปหน้าเป้าหมายทันที เพื่อตัดวงจร ping-pong
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -64,11 +48,10 @@ export default function AdminLoginPage() {
     }
   };
 
-  // แสดง Loading ระหว่างที่ AuthContext กำลังตรวจสอบสถานะ หรือถ้าเป็น Admin อยู่แล้ว (ก่อน redirect)
   if (authLoading || isAdmin) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-100">
-        <p className="text-gray-600">Loading...</p>
+        <p className="text-gray-600">Loading…</p>
       </div>
     );
   }
