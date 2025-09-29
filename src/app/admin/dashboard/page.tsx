@@ -1,144 +1,170 @@
 // src/app/admin/dashboard/page.tsx
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import "./dashboard.css";
 
-type RevenueResp = { revenue: number; currency?: string };
-type SalesResp = { totalSales: number };
-type Customer = { id: string };
-
-const THB = new Intl.NumberFormat("th-TH", {
-  style: "currency",
-  currency: "THB",
-});
+type SummaryDTO = {
+  revenueToday?: number | null;
+  totalSalesToday?: number | null;
+  customersTotal?: number | null;
+};
 
 export default function AdminDashboardPage() {
+  const [summary, setSummary] = useState<SummaryDTO>({
+    revenueToday: null,
+    totalSalesToday: null,
+    customersTotal: null,
+  });
   const [loading, setLoading] = useState(true);
-  const [revenue, setRevenue] = useState<number>(0);
-  const [totalSales, setTotalSales] = useState<number>(0);
-  const [customersTotal, setCustomersTotal] = useState<number>(0);
-  const [error, setError] = useState<string>("");
+  const [err, setErr] = useState<string>("");
 
   const token =
-    typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
+    typeof window !== "undefined"
+      ? localStorage.getItem("accessToken")
+      : null;
 
   useEffect(() => {
-    let mounted = true;
-
-    async function load() {
+    const load = async () => {
       setLoading(true);
-      setError("");
+      setErr("");
 
-      const headers: HeadersInit = token
-        ? { Authorization: `Bearer ${token}` }
-        : {};
+      // helper
+      const withAuth = (headers: HeadersInit = {}) => ({
+        ...headers,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      });
 
       try {
-        // ---- Revenue (ปรับ endpoint ให้ตรงกับ BE ของคุณได้) ----
-        // คาดหวังผลลัพธ์ { revenue: number, currency?: string }
-        const revRes = await fetch(
-          "http://localhost:8080/api/reports/revenue?range=today",
-          { headers, cache: "no-store" }
-        ).catch(() => undefined);
-
-        if (revRes?.ok) {
-          const r: RevenueResp = await revRes.json();
-          if (mounted) setRevenue(r?.revenue ?? 0);
-        } else {
-          if (mounted) setRevenue(0);
-        }
-
-        // ---- Total sales (จำนวนออเดอร์ขายรวมวันนี้/ช่วงที่กำหนด) ----
-        // คาดหวังผลลัพธ์ { totalSales: number }
-        const salesRes = await fetch(
-          "http://localhost:8080/api/reports/total-sales?range=today",
-          { headers, cache: "no-store" }
-        ).catch(() => undefined);
-
-        if (salesRes?.ok) {
-          const s: SalesResp = await salesRes.json();
-          if (mounted) setTotalSales(s?.totalSales ?? 0);
-        } else {
-          if (mounted) setTotalSales(0);
-        }
-
-        // ---- Customers (นับจาก /api/customers) ----
-        const cusRes = await fetch("http://localhost:8080/api/customers", {
-          headers,
+        // 1) พยายามเรียก /api/dashboard ก่อน
+        const res = await fetch("http://localhost:8080/api/dashboard", {
+          headers: withAuth(),
           cache: "no-store",
-        }).catch(() => undefined);
+        });
 
-        if (cusRes?.ok) {
-          const list: Customer[] = await cusRes.json();
-          if (mounted) setCustomersTotal(list?.length ?? 0);
+        if (res.ok) {
+          const data: SummaryDTO = await res.json();
+          setSummary({
+            revenueToday:
+              typeof data.revenueToday === "number" ? data.revenueToday : null,
+            totalSalesToday:
+              typeof data.totalSalesToday === "number"
+                ? data.totalSalesToday
+                : null,
+            customersTotal:
+              typeof data.customersTotal === "number"
+                ? data.customersTotal
+                : null,
+          });
         } else {
-          if (mounted) setCustomersTotal(0);
+          // 2) ถ้า BE ยังไม่ทำ summary → ใส่ None ไว้ก่อน
+          setSummary((s) => ({ ...s }));
+        }
+
+        // 3) Fallback สำหรับ customersTotal: ถ้าในข้อ 1) ไม่มีหรือเป็น null
+        if (summary.customersTotal == null) {
+          try {
+            const rc = await fetch("http://localhost:8080/api/customers", {
+              headers: withAuth(),
+              cache: "no-store",
+            });
+            if (rc.ok) {
+              const arr: any[] = await rc.json();
+              setSummary((s) => ({ ...s, customersTotal: arr?.length ?? 0 }));
+            }
+          } catch {
+            /* เงียบไว้ */
+          }
         }
       } catch (e: any) {
-        if (mounted) setError(e?.message || "Failed to load dashboard");
+        setErr(e?.message || "Load dashboard failed.");
       } finally {
-        if (mounted) setLoading(false);
+        setLoading(false);
       }
-    }
-
-    load();
-    return () => {
-      mounted = false;
     };
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  const revenueText = useMemo(() => THB.format(revenue || 0), [revenue]);
-
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
-        <p className="text-sm text-gray-500">Overview</p>
+    <div className="dash-wrap">
+      <div className="dash-head">
+        <h1>Dashboard</h1>
+        <p className="dash-sub">Overview</p>
       </div>
 
-      {error && (
-        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      {err && <p className="dash-error">⚠ {err}</p>}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <StatCard
-          title="Revenue"
-          value={loading ? "…" : revenueText}
-          subtitle="Today"
+      <div className="dash-grid">
+        <SummaryCard
+          label="Revenue"
+          note="Today"
+          value={
+            loading
+              ? "…"
+              : summary.revenueToday == null
+              ? "None"
+              : formatBaht(summary.revenueToday)
+          }
+          large
         />
-        <StatCard
-          title="Total Sales"
-          value={loading ? "…" : totalSales.toLocaleString()}
-          subtitle="Today"
+
+        <SummaryCard
+          label="Total Sales"
+          note="Today"
+          value={
+            loading
+              ? "…"
+              : summary.totalSalesToday == null
+              ? "None"
+              : String(summary.totalSalesToday)
+          }
         />
-        <StatCard
-          title="Customers Total"
-          value={loading ? "…" : customersTotal.toLocaleString()}
-          subtitle="All time"
+
+        <SummaryCard
+          label="Customers Total"
+          note="All time"
+          value={
+            loading
+              ? "…"
+              : summary.customersTotal == null
+              ? "None"
+              : String(summary.customersTotal)
+          }
         />
       </div>
     </div>
   );
 }
 
-function StatCard({
-  title,
+/* ---------- UI bits ---------- */
+
+function SummaryCard({
+  label,
   value,
-  subtitle,
+  note,
+  large = false,
 }: {
-  title: string;
-  value: string | number;
-  subtitle?: string;
+  label: string;
+  value: string;
+  note?: string;
+  large?: boolean;
 }) {
   return (
-    <div className="rounded-xl border bg-white p-5 shadow-sm">
-      <div className="text-sm text-gray-500">{title}</div>
-      <div className="mt-2 text-3xl font-semibold text-gray-900">{value}</div>
-      {subtitle ? (
-        <div className="mt-1 text-xs text-gray-400">{subtitle}</div>
-      ) : null}
+    <div className={`kpi-card ${large ? "kpi-lg" : ""}`}>
+      <div className="kpi-label">{label}</div>
+      <div className={`kpi-value ${value === "None" ? "kpi-none" : ""}`}>
+        {value}
+      </div>
+      {note && <div className="kpi-note">{note}</div>}
     </div>
   );
+}
+
+function formatBaht(n: number) {
+  return new Intl.NumberFormat("th-TH", {
+    style: "currency",
+    currency: "THB",
+    maximumFractionDigits: 2,
+  }).format(n);
 }
