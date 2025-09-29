@@ -1,234 +1,248 @@
-// src/app/admin/customers/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import "./customers.css";
-import ActionsMenu from "./actionmenu";
+import Link from "next/link";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-type Customer = {
+type CustomerItem = {
   id: string;
   name: string;
   email: string;
   roles: string[];
   active: boolean;
-  lastActive: string | null; // ISO string (จาก BE: Instant)
+  lastActive?: string | null;
 };
 
-type SortKey = "name" | "email" | "roles" | "status" | "lastActive";
-
-export default function AdminCustomersPage() {
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [error, setError] = useState<string>("");
+export default function CustomersPage() {
+  const [items, setItems] = useState<CustomerItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string>("");
+  const [q, setQ] = useState("");
 
-  const [search, setSearch] = useState("");
-  const [roleFilter, setRoleFilter] = useState<"All" | "User" | "Admin">("All");
-  const [statusFilter, setStatusFilter] = useState<"All" | "Active" | "Inactive">("All");
+  const token =
+    typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
 
-  const [sortKey, setSortKey] = useState<SortKey>("name");
-  const [sortAsc, setSortAsc] = useState<boolean>(true);
+  const withAuth = (headers: HeadersInit = {}) => ({
+    ...headers,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  });
 
-  // TODO: ดึง token แอดมินจาก context/ที่คุณมีอยู่
-  const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
+  const load = async () => {
+    setLoading(true);
+    setErr("");
+    try {
+      const res = await fetch("http://localhost:8080/api/customers", {
+        headers: withAuth(),
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error(`Failed to load customers (${res.status})`);
+      const json: CustomerItem[] = await res.json();
+      setItems(json ?? []);
+    } catch (e: any) {
+      setErr(e?.message || "Failed to load customers");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchCustomers = async () => {
-      setLoading(true);
-      setError("");
-      try {
-        const res = await fetch("http://localhost:8080/api/customers", {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          cache: "no-store",
-        });
-        if (!res.ok) {
-          throw new Error(`Failed to fetch customers (${res.status})`);
-        }
-        const data: Customer[] = await res.json();
-        setCustomers(data);
-      } catch (e: any) {
-        setError(e?.message || "Failed to fetch customers");
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchCustomers();
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   const filtered = useMemo(() => {
-    return customers
-      .filter(c => {
-        if (roleFilter === "Admin") return c.roles?.some(r => r.toUpperCase() === "ADMIN");
-        if (roleFilter === "User") return !c.roles?.some(r => r.toUpperCase() === "ADMIN");
-        return true;
-      })
-      .filter(c => {
-        if (statusFilter === "Active") return c.active === true;
-        if (statusFilter === "Inactive") return c.active === false;
-        return true;
-      })
-      .filter(c =>
-        (c.name || "").toLowerCase().includes(search.toLowerCase()) ||
-        (c.email || "").toLowerCase().includes(search.toLowerCase())
-      );
-  }, [customers, search, roleFilter, statusFilter]);
+    const s = q.trim().toLowerCase();
+    if (!s) return items;
+    return items.filter(
+      (x) =>
+        x.name?.toLowerCase().includes(s) ||
+        x.email?.toLowerCase().includes(s) ||
+        x.roles?.some((r) => r.toLowerCase().includes(s))
+    );
+  }, [items, q]);
 
-  const sorted = useMemo(() => {
-    const arr = [...filtered];
-    arr.sort((a, b) => {
-      const av = getSortValue(a, sortKey);
-      const bv = getSortValue(b, sortKey);
-      if (typeof av === "string" && typeof bv === "string") {
-        return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
-      }
-      if (typeof av === "number" && typeof bv === "number") {
-        return sortAsc ? av - bv : bv - av;
-      }
-      return 0;
-    });
-    return arr;
-  }, [filtered, sortKey, sortAsc]);
+  // --- Action menu ---
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const menuRef = useRef<HTMLTableSectionElement | null>(null);
 
-  const toggleSort = (key: SortKey) => {
-    if (sortKey === key) setSortAsc(s => !s);
-    else {
-      setSortKey(key);
-      setSortAsc(true);
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      const t = e.target as Node;
+      if (menuRef.current && !menuRef.current.contains(t)) {
+        setOpenMenuId(null);
+      }
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
+
+  const onDelete = async (user: CustomerItem) => {
+    const ok = window.confirm(`Delete user "${user.name || user.email}" ?`);
+    if (!ok) return;
+
+    try {
+      const res = await fetch(`http://localhost:8080/api/customers/${user.id}`, {
+        method: "DELETE",
+        headers: withAuth(),
+      });
+      if (!res.ok) throw new Error(`Delete failed (${res.status})`);
+      setItems((prev) => prev.filter((x) => x.id !== user.id));
+      setOpenMenuId(null);
+    } catch (e: any) {
+      alert(e?.message || "Delete failed");
     }
   };
 
   return (
-    <div className="cust-wrap">
-      <div className="cust-header">
-        <h1>Customers</h1>
-        <div className="cust-filters">
+    <div className="mx-auto max-w-6xl space-y-6 p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">Customers</h1>
+          <p className="text-sm text-gray-500">All registered users</p>
+        </div>
+
+        <div className="relative w-full sm:w-72">
           <input
-            className="cust-search"
-            placeholder="Search customers..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search name, email, role…"
+            className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none ring-0 placeholder:text-gray-400 focus:border-gray-300 focus:ring-1 focus:ring-gray-200"
           />
-
-          <select
-            className="cust-select"
-            value={roleFilter}
-            onChange={(e) => setRoleFilter(e.target.value as any)}
-          >
-            <option>All</option>
-            <option>User</option>
-            <option>Admin</option>
-          </select>
-
-          <select
-            className="cust-select"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as any)}
-          >
-            <option>All</option>
-            <option>Active</option>
-            <option>Inactive</option>
-          </select>
-
-          <button
-            className="cust-reset"
-            onClick={() => {
-              setSearch("");
-              setRoleFilter("All");
-              setStatusFilter("All");
-              setSortKey("name");
-              setSortAsc(true);
-            }}
-          >
-            Reset
-          </button>
+          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400">
+            ⌘K
+          </span>
         </div>
       </div>
 
-      {error && <p className="cust-error">{error}</p>}
-      {loading ? (
-        <div className="cust-loading">Loading...</div>
-      ) : (
-        <div className="cust-table-wrap">
-          <table className="cust-table">
-            <thead>
-              <tr>
-                <Th sortable onClick={() => toggleSort("name")} active={sortKey === "name"} asc={sortAsc}>Name</Th>
-                <Th sortable onClick={() => toggleSort("email")} active={sortKey === "email"} asc={sortAsc}>Email</Th>
-                <Th sortable onClick={() => toggleSort("roles")} active={sortKey === "roles"} asc={sortAsc}>Roles</Th>
-                <Th sortable onClick={() => toggleSort("status")} active={sortKey === "status"} asc={sortAsc}>Status</Th>
-                <Th sortable onClick={() => toggleSort("lastActive")} active={sortKey === "lastActive"} asc={sortAsc}>Last Active</Th>
-                <Th>Actions</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.length === 0 && (
-                <tr><td className="cust-empty" colSpan={6}>No customers found.</td></tr>
-              )}
-              {sorted.map(c => (
-                <tr key={c.id}>
-                  <td>{c.name}</td>
-                  <td>{c.email}</td>
-                  <td>
-                    {c.roles?.map((r, i) => (
-                      <span key={i} className={`role-badge ${r.toUpperCase()==="ADMIN"?"admin":"user"}`}>
-                        {r.toUpperCase()==="ADMIN" ? "Admin" : "User"}
-                      </span>
-                    ))}
-                  </td>
-                  <td>
-                    <span className={`status-badge ${c.active ? "active" : "inactive"}`}>
-                      {c.active ? "Active" : "Inactive"}
-                    </span>
-                  </td>
-                  <td>{formatLastActive(c.lastActive)}</td>
-                  <td>
-                    <ActionsMenu
-                      customerId={c.id}
-                      token={token} // token ที่คุณดึงจาก localStorage/context
-                      onDeleted={(id) => setCustomers(prev => prev.filter(x => x.id !== id))}
-                    />
+      {err && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-red-700">
+          {err}
+        </div>
+      )}
+
+      <div className="overflow-x-auto rounded-2xl border border-gray-200 bg-white shadow-sm">
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs uppercase tracking-wider text-gray-500">
+              <th className="px-4 py-3">Name</th>
+              <th className="px-4 py-3">Email</th>
+              <th className="px-4 py-3">Role</th>
+              <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Last Active</th>
+              {/* ✅ จัดหัวคอลัมน์ ACTION ชิดขวา */}
+              <th className="px-4 py-3 text-right">Action</th>
+            </tr>
+          </thead>
+
+          {/* ใช้ ref เพื่อจับคลิกนอกเมนู */}
+          <tbody ref={menuRef}>
+            {loading &&
+              Array.from({ length: 6 }).map((_, i) => (
+                <tr key={i} className="border-b border-gray-50">
+                  <td className="px-4 py-4" colSpan={6}>
+                    <div className="h-4 w-full animate-pulse rounded bg-gray-100" />
                   </td>
                 </tr>
               ))}
-            </tbody>
-          </table>
+
+            {!loading && filtered.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
+                  No customers found
+                </td>
+              </tr>
+            )}
+
+            {!loading &&
+              filtered.map((u) => (
+                <tr key={u.id} className="border-b border-gray-50">
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-gray-900">{u.name || "-"}</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="text-gray-700">{u.email}</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <RoleBadge roles={u.roles} />
+                  </td>
+                  <td className="px-4 py-3">
+                    <StatusPill active={u.active} />
+                  </td>
+                  <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                    {u.lastActive ? new Date(u.lastActive).toLocaleString() : "-"}
+                  </td>
+
+                  {/* ✅ คอลัมน์ Action: จัดชิดขวา + ปุ่มกึ่งกลางแนวตั้ง */}
+                  <td className="relative px-4 py-3">
+                    <div className="flex items-center justify-end">
+                      <button
+                        onClick={() =>
+                          setOpenMenuId((prev) => (prev === u.id ? null : u.id))
+                        }
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 text-gray-700 hover:bg-gray-50 focus:outline-none"
+                        aria-haspopup="menu"
+                        aria-expanded={openMenuId === u.id}
+                      >
+                        ⋮
+                      </button>
+                    </div>
+
+                    {/* ✅ เมนูชิดขวาตรงปุ่ม, รายการกว้างเท่ากันและจัดชิดซ้าย */}
+                    {openMenuId === u.id && (
+                      <div className="absolute right-4 top-full z-20 mt-2 w-44 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
+                        <Link
+                          href={`/admin/customers/${u.id}`}
+                          className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                          onClick={() => setOpenMenuId(null)}
+                        >
+                          <span className="whitespace-nowrap">View profile</span>
+                        </Link>
+                        <button
+                          onClick={() => onDelete(u)}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                        >
+                          <span className="whitespace-nowrap">Delete user</span>
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      </div>
+
+      {!loading && (
+        <div className="text-xs text-gray-500">
+          Showing <span className="font-medium">{filtered.length}</span> of{" "}
+          <span className="font-medium">{items.length}</span> customers
         </div>
       )}
     </div>
   );
 }
 
-function getSortValue(c: any, key: SortKey): string | number {
-  switch (key) {
-    case "name": return c.name || "";
-    case "email": return c.email || "";
-    case "roles": return (c.roles && c.roles.join(",")) || "";
-    case "status": return c.active ? 1 : 0;
-    case "lastActive": return c.lastActive ? new Date(c.lastActive).getTime() : 0;
-    default: return "";
-  }
-}
+/* -------- UI helpers -------- */
 
-function formatLastActive(iso: string | null) {
-  if (!iso) return "-";
-  const diffMs = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return "Just now";
-  if (mins < 60) return `${mins} minute${mins>1?"s":""} ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours} hour${hours>1?"s":""} ago`;
-  const days = Math.floor(hours / 24);
-  return `${days} day${days>1?"s":""} ago`;
-}
-
-function Th({
-  children, sortable=false, onClick, active, asc
-}: {children:React.ReactNode; sortable?:boolean; onClick?:()=>void; active?:boolean; asc?:boolean}) {
+function RoleBadge({ roles }: { roles: string[] }) {
+  const isAdmin = roles?.includes("ADMIN");
+  const cls = isAdmin
+    ? "bg-red-50 text-red-700 border-red-300"
+    : "bg-blue-50 text-blue-700 border-blue-300";
   return (
-    <th className={`th ${sortable?"sortable":""}`} onClick={onClick}>
-      <span>{children}</span>
-      {sortable && (
-        <span className={`arrow ${active?"on":""}`}>{active ? (asc ? "▲" : "▼") : "▲"}</span>
-      )}
-    </th>
+    <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-semibold ${cls}`}>
+      {isAdmin ? "ADMIN" : "USER"}
+    </span>
+  );
+}
+
+function StatusPill({ active }: { active: boolean }) {
+  const cls = active
+    ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+    : "bg-amber-50 text-amber-700 ring-amber-200";
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ${cls}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${active ? "bg-emerald-500" : "bg-amber-500"}`} />
+      {active ? "Active" : "Inactive"}
+    </span>
   );
 }
