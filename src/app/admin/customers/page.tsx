@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import "./customers.css";
+import ActionsMenu from "./actionmenu";
 
 type Customer = {
   id: string;
@@ -180,10 +181,11 @@ export default function AdminCustomersPage() {
                   </td>
                   <td>{formatLastActive(c.lastActive)}</td>
                   <td>
-                    <div className="actions">
-                      <button className="link-btn">⋯</button>
-                      {/* ใส่เมนูจริงทีหลังได้ เช่น Edit / View / Delete */}
-                    </div>
+                    <ActionsMenu
+                      customerId={c.id}
+                      token={token} // token ที่คุณดึงจาก localStorage/context
+                      onDeleted={(id) => setCustomers(prev => prev.filter(x => x.id !== id))}
+                    />
                   </td>
                 </tr>
               ))}
