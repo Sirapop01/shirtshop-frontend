@@ -140,7 +140,7 @@ export default function AdminDashboardPage() {
       const _cats  = catRes.ok ? ((await catRes.json()) as CategoryBreakdown[]) : null;
       const _orders= ordRes.ok ? ((await ordRes.json()) as OrderItem[]) : null;
       const _tops  = topRes.ok ? ((await topRes.json()) as TopProduct[]) : null;
-      const _low   = lowRes.ok ? ((await lowRes.json()) as LowStockItem[]) : null;
+      const _low   = lowRes.ok ? ((await lowRes.json()) as LowStockItem[]) : [];
 
       if (!mounted) return;
       setSummary(_summary);
@@ -289,22 +289,26 @@ export default function AdminDashboardPage() {
           </div>
 
           <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-            <SectionHead title="Low Stock" />
-            <div className="mt-2 space-y-2">
-              {(lowStock ?? []).slice(0, 6).map((i) => (
-                <div key={i.id} className="flex items-center justify-between">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium text-gray-900">
-                      {i.name} {i.sku ? <span className="text-gray-400">• {i.sku}</span> : null}
-                    </div>
-                  </div>
-                  <span className="rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
-                    {i.stock} left
-                  </span>
-                </div>
-              ))}
-              {!lowStock?.length && <EmptyHint text="All stocks are healthy" />}
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900">Low Stock</h3>
             </div>
+
+            {/* empty state */}
+            {(!lowStock || lowStock.length === 0) ? (
+            <EmptyHint text="All stocks are healthy" />
+            ) : (
+              <ul className="mt-2 divide-y divide-gray-100">
+                {lowStock.map(i => (
+                  <li key={i.id} className="flex items-center justify-between py-2">
+                    <span className="truncate text-sm">{i.name}{i.sku ? ` • ${i.sku}` : ""}</span>
+                    <span className={`rounded-md px-2 py-0.5 text-xs font-medium ring-1
+                      ${i.stock <= 0 ? "bg-red-50 text-red-700 ring-red-200" : "bg-amber-50 text-amber-700 ring-amber-200"}`}>
+                      {i.stock} left
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
       </div>

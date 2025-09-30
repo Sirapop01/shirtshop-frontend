@@ -4,16 +4,30 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import AdminGuard from "@/components/auth/AdminGuard";
+import { useAuth } from "@/context/AuthContext";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const { logout } = useAuth();
   const [openProducts, setOpenProducts] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [openSettings, setOpenSettings] = useState(false);
 
-  // ปิดเมนูเมื่อเปลี่ยนเส้นทาง (กันค้างบนมือถือ)
+  // ปิด sidebar เมื่อ path เปลี่ยน
   useEffect(() => {
     setSidebarOpen(false);
   }, [pathname]);
+
+  // ปิดเมนูโปรไฟล์เมื่อคลิกนอก
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      const el = document.getElementById("user-menu-anchor");
+      if (el && !el.contains(e.target as Node)) setUserMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
 
   const NavItem = ({
     href,
@@ -42,7 +56,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     );
   };
 
-  // ✅ ไม่ครอบ /admin/login ด้วย AdminGuard แต่ยังคงเรียก hooks เหมือนเดิมทุกครั้ง
+  // ❗️ไม่ครอบ /admin/login
   if (pathname === "/admin/login") {
     return <>{children}</>;
   }
@@ -74,6 +88,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <nav className="space-y-1 p-3">
             <NavItem href="/admin/dashboard" label="Dashboard" icon={<span>📊</span>} />
 
+            {/* Products group */}
             <button
               type="button"
               onClick={() => setOpenProducts((s) => !s)}
@@ -92,9 +107,24 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
             <NavItem href="/admin/orders" label="Orders" icon={<span>🧾</span>} />
             <NavItem href="/admin/customers" label="Customers" icon={<span>👥</span>} />
-            <NavItem href="/admin/setting" label="Setting" icon={<span>⚙️</span>} />
-          </nav>
 
+            <button
+                type="button"
+                onClick={() => setOpenSettings((s) => !s)}
+                className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm text-gray-600 transition hover:bg-gray-50 hover:text-gray-900"
+                >
+                <span>⚙️</span>
+                <span className="flex-1 text-left">Setting</span>
+                <span className="text-xs">{openSettings ? "▾" : "▸"}</span>
+            </button>
+              {openSettings && (
+                <div className="ml-6 space-y-1">
+                  <NavItem href="/admin/setting/payment" label="Payment & Shipping" />
+                  <NavItem href="/admin/setting/admin" label="Admin" />
+                  <NavItem href="/admin/setting/branding" label="Logo & Website name" />
+                </div>
+              )}
+          </nav>
           <div className="absolute bottom-0 w-full border-t px-4 py-3 text-xs text-gray-500">
             © {new Date().getFullYear()} SyleWhere
           </div>
@@ -116,14 +146,39 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 <h1 className="text-base font-medium text-gray-800">Admin Console</h1>
               </div>
 
+              {/* Right side */}
               <div className="flex items-center gap-3">
                 <button className="hidden rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 md:inline-flex">
                   Help
                 </button>
-                <div className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1 text-sm text-gray-700">
-                  <span className="inline-block h-6 w-6 overflow-hidden rounded-full bg-gray-200" />
-                  <span>Admin</span>
-                  <span className="text-gray-400">▾</span>
+
+                <div id="user-menu-anchor" className="relative">
+                  {/* trigger */}
+                  <button
+                    onClick={() => setUserMenuOpen((o) => !o)}
+                    className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1 text-sm text-gray-700 hover:bg-gray-50"
+                    aria-haspopup="menu"
+                    aria-expanded={userMenuOpen}
+                  >
+                    <span className="inline-block h-6 w-6 overflow-hidden rounded-full bg-gray-200" />
+                    <span>Admin</span>
+                    <span className="text-gray-400">▾</span>
+                  </button>
+
+                  {/* dropdown */}
+                  {userMenuOpen && (
+                    <div className="absolute right-0 z-40 mt-2 w-44 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
+                      <button
+                        onClick={() => {
+                          setUserMenuOpen(false);
+                          logout();
+                        }}
+                        className="block w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                      >
+                        Logout
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
