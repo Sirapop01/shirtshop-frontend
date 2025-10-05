@@ -7,7 +7,6 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/context/AuthContext"; // ✅ ใช้ AuthContext
 
-// ใช้ Type ให้เข้ากับ BE
 export type UserResponse = {
   id: string;
   email: string;
@@ -23,7 +22,7 @@ export type UserResponse = {
 type LoginResponse = {
   accessToken: string;
   refreshToken?: string | null;
-  tokenType?: string; // unused (AuthContext ใส่ Bearer ให้อยู่แล้ว)
+  tokenType?: string;
   user?: UserResponse;
 };
 
@@ -32,11 +31,11 @@ const API_BASE = RAW_API_BASE.replace(/\/$/, ""); // กัน / ซ้ำ
 
 export default function Login() {
   const router = useRouter();
-  const { user, login } = useAuth(); // ✅ ดึง login() จาก Context
+  const { user, login } = useAuth();
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [remember, setRemember] = useState(true); // ✅ remember me
+  const [email, setEmail] = useState("user@gmail.com");
+  const [password, setPassword] = useState("user1234");
+  const [remember, setRemember] = useState(true);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -79,13 +78,13 @@ export default function Login() {
           try {
             const j = await meRes.json();
             message = j?.message || j?.error || message;
-          } catch {}
+          } catch { }
           throw new Error(message);
         }
         const me = (await meRes.json()) as UserResponse;
 
         // ✅ เรียก AuthContext.login ให้จัดการเก็บ token + state
-        login(tokens.accessToken, tokens.refreshToken ?? null, me, true /* social login -> remember */);
+        login(tokens.accessToken, tokens.refreshToken ?? null, me, true);
 
         // ล้าง hash/query ใน URL
         const cleanPath = window.location.pathname;
@@ -130,7 +129,7 @@ export default function Login() {
         try {
           const d = await res.json();
           message = d?.message || d?.error || message;
-        } catch {}
+        } catch { }
         throw new Error(message);
       }
 

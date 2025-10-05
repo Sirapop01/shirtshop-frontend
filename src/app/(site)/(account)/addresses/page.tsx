@@ -12,14 +12,15 @@ import { useThaiLocations } from "@/lib/useThaiLocations";
 /* ---------------- Schema ---------------- */
 const schema = z.object({
   fullName: z.string().min(1, "กรุณากรอกชื่อ-นามสกุล"),
-  phone: z.string().regex(/^0\\d{8,9}$/, "เบอร์โทรไม่ถูกต้อง"),
+  phone: z.string().regex(/^0\d{8,9}$/, "เบอร์โทรไม่ถูกต้อง"),
   addressLine1: z.string().min(1, "กรุณากรอกที่อยู่"),
   province: z.string().min(1, "กรุณาเลือกจังหวัด"),
   district: z.string().min(1, "กรุณาเลือกอำเภอ/เขต"),
   subdistrict: z.string().min(1, "กรุณาเลือกตำบล/แขวง"),
-  postalCode: z.string().regex(/^\\d{5}$/, "รหัสไปรษณีย์ไม่ถูกต้อง"),
+  postalCode: z.string().regex(/^\d{5}$/, "รหัสไปรษณีย์ไม่ถูกต้อง"), 
   isDefault: z.boolean().optional(),
 });
+
 type FormValues = z.infer<typeof schema>;
 
 export default function AddressPage() {
@@ -67,8 +68,8 @@ export default function AddressPage() {
   const hydratingRef = useRef(false);
   const pendingRef = useRef<{ province?: string; district?: string; subdistrict?: string } | null>(null);
 
-  useEffect(() => { if (!hydratingRef.current) { setValue("district",""); setValue("subdistrict",""); setValue("postalCode",""); } }, [selectedProvince, setValue]);
-  useEffect(() => { if (!hydratingRef.current) { setValue("subdistrict",""); setValue("postalCode",""); } }, [selectedDistrict, setValue]);
+  useEffect(() => { if (!hydratingRef.current) { setValue("district", ""); setValue("subdistrict", ""); setValue("postalCode", ""); } }, [selectedProvince, setValue]);
+  useEffect(() => { if (!hydratingRef.current) { setValue("subdistrict", ""); setValue("postalCode", ""); } }, [selectedDistrict, setValue]);
 
   // auto ZIP
   useEffect(() => {
@@ -78,7 +79,7 @@ export default function AddressPage() {
   }, [selectedSubdistrict, getZipByTambonName, setValue]);
 
   // โหลดรายการจาก backend
-  useEffect(() => { refresh().catch(() => {}); }, [refresh]);
+  useEffect(() => { refresh().catch(() => { }); }, [refresh]);
 
   /* ---------- Hydrate: province -> district -> subdistrict ---------- */
   useEffect(() => {
