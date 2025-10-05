@@ -25,15 +25,16 @@ const REFRESH_TOKEN_SS_KEY = "refreshToken"; // session
 export interface UserResponse {
   id: string;
   email: string;
-  username: string;
-  firstName: string;
-  lastName: string;
-  displayName: string;
-  phone: string;
-  profileImageUrl: string;
-  emailVerified: boolean;
-  roles: string[];
+  username?: string;      
+  firstName?: string;
+  lastName?: string;
+  displayName?: string;
+  phone?: string;
+  profileImageUrl?: string;
+  emailVerified?: boolean;
+  roles?: string[];
 }
+
 
 interface DecodedToken {
   sub?: string;
