@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { useAuth } from "@/context/AuthContext";
 
+/* ---------------- Types ---------------- */
 type ImageInfo = { publicId: string; url: string };
 
 interface Product {
@@ -13,16 +14,20 @@ interface Product {
   name: string;
   category: string;
   price: number;
-  stockQuantity?: number;        // BE ใหม่จะมี sum รวม
-  variantStocks?: { color: string; size: string; quantity: number }[]; // เผื่ออยากใช้ต่อ
-  images?: ImageInfo[];          // BE ใหม่
-  imageUrls?: string[];          // BE เก่า (ยัง fallback ได้)
+  stockQuantity?: number; // BE รวมยอดสต็อกทั้งหมด
+  variantStocks?: { color: string; size: string; quantity: number }[];
+  images?: ImageInfo[];
+  imageUrls?: string[]; // fallback
   createdAt?: string;
 }
 
 type SortKey = "name" | "category" | "price" | "stock";
 
+/* ---------------- Utils ---------------- */
 const THB = new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB" });
+const coverImage = (p: Product) => p.images?.[0]?.url ?? p.imageUrls?.[0] ?? "/placeholder.png";
+
+/* ============================================================ */
 
 export default function AdminProductsPage() {
   const { user, isAdmin, authLoading, token } = useAuth();
@@ -32,15 +37,15 @@ export default function AdminProductsPage() {
   const [pageLoading, setPageLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string>("");
 
-  const [searchTerm, setSearchTerm] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("All");
-
+  // UI state
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState("All");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortAsc, setSortAsc] = useState(true);
-
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [view, setView] = useState<"table" | "grid">("table");
 
-  // auth gate
+  /* ------------ Auth gate ------------ */
   useEffect(() => {
     if (authLoading) return;
     if (!user || !isAdmin) {
@@ -50,13 +55,13 @@ export default function AdminProductsPage() {
     setPageLoading(false);
   }, [authLoading, user, isAdmin, router]);
 
-  // fetch products
+  /* ------------ Fetch products ------------ */
   const fetchProducts = useCallback(async () => {
     if (!token) return;
     setFetchError("");
     try {
       const res = await fetch("http://localhost:8080/api/products", {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
         cache: "no-store",
       });
       if (!res.ok) {
@@ -64,7 +69,7 @@ export default function AdminProductsPage() {
         return;
       }
       const data: Product[] = await res.json();
-      setProducts(data);
+      setProducts(data ?? []);
     } catch (err: any) {
       setFetchError(err?.message || "Failed to fetch products");
     }
@@ -75,24 +80,19 @@ export default function AdminProductsPage() {
     void fetchProducts();
   }, [pageLoading, isAdmin, fetchProducts]);
 
-  // image helper
-  const coverImage = (p: Product) =>
-    p.images?.[0]?.url ?? p.imageUrls?.[0] ?? "/placeholder.png";
-
-  // unique categories
-  const uniqueCategories = useMemo(
+  /* ------------ Derived states ------------ */
+  const categories = useMemo(
     () => ["All", ...Array.from(new Set(products.map((p) => p.category || "Uncategorized")))],
     [products]
   );
 
-  // filter
   const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
     return products
-      .filter((p) => selectedCategory === "All" || p.category === selectedCategory)
-      .filter((p) => p.name.toLowerCase().includes(searchTerm.toLowerCase()));
-  }, [products, selectedCategory, searchTerm]);
+      .filter((p) => (category === "All" ? true : p.category === category))
+      .filter((p) => (!q ? true : p.name.toLowerCase().includes(q) || p.category?.toLowerCase().includes(q)));
+  }, [products, category, query]);
 
-  // sort
   const sorted = useMemo(() => {
     const arr = [...filtered];
     arr.sort((a, b) => {
@@ -130,21 +130,17 @@ export default function AdminProductsPage() {
     }
   };
 
-  // delete
+  /* ------------ Delete ------------ */
   const handleDelete = async (id: string) => {
     if (!token) return;
-    const confirmMsg = "แน่ใจหรือไม่ว่าต้องการลบสินค้า? การลบนี้ไม่สามารถย้อนกลับได้.";
-    if (!window.confirm(confirmMsg)) return;
+    if (!confirm("แน่ใจหรือไม่ว่าต้องการลบสินค้า? การลบนี้ไม่สามารถย้อนกลับได้.")) return;
     try {
       setDeletingId(id);
       const res = await fetch(`http://localhost:8080/api/products/${id}`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(txt || `Failed to delete (${res.status})`);
-      }
+      if (!res.ok) throw new Error(`Delete failed (${res.status})`);
       setProducts((prev) => prev.filter((p) => p.id !== id));
     } catch (err: any) {
       alert(err?.message || "Failed to delete.");
@@ -153,182 +149,294 @@ export default function AdminProductsPage() {
     }
   };
 
-  const stockBadge = (qty: number | undefined) => {
+  /* ------------ UI bits ------------ */
+  const stockBadge = (qty?: number) => {
     const n = qty ?? 0;
-    const base = "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium";
-    if (n <= 0) return <span className={`${base} bg-red-100 text-red-700`}>Out of stock</span>;
-    if (n <= 5) return <span className={`${base} bg-yellow-100 text-yellow-800`}>Low: {n}</span>;
-    return <span className={`${base} bg-green-100 text-green-800`}>{n}</span>;
+    const base = "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1";
+    if (n <= 0) return <span className={`${base} bg-red-50 text-red-700 ring-red-200`}>Out of stock</span>;
+    if (n <= 5) return <span className={`${base} bg-amber-50 text-amber-700 ring-amber-200`}>Low: {n}</span>;
+    return <span className={`${base} bg-emerald-50 text-emerald-700 ring-emerald-200`}>{n}</span>;
   };
 
+
+  /* ------------ Loading / Empty ------------ */
   if (authLoading || pageLoading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+    return (
+      <div className="p-6 space-y-6">
+        <ToolbarSkeleton />
+        <CardsRowSkeleton />
+        <TableSkeleton />
+      </div>
+    );
   }
 
   return (
-    <div className="p-4 sm:p-6 md:p-8">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-3xl font-bold">Admin Products</h1>
+    <div className="p-6 space-y-6">
+      {/* Header */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">Products</h1>
+          <p className="text-sm text-gray-500">Manage your catalog</p>
+        </div>
         <Link
           href="/admin/products/new"
-          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors"
+          className="inline-flex items-center justify-center rounded-xl bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-black"
         >
-          Add New Product
+          + Add Product
         </Link>
       </div>
 
-      {/* Filter + Search */}
-      <div className="flex flex-col lg:flex-row lg:items-center gap-4 mb-6">
-        <input
-          type="text"
-          placeholder="Search products..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full lg:w-1/3 p-2 border rounded-md"
+      {/* Quick cards */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiCard label="Total items" value={String(products.length)} />
+        <KpiCard
+          label="In stock"
+          value={String(products.filter((p) => (p.stockQuantity ?? 0) > 0).length)}
         />
-        <select
-          value={selectedCategory}
-          onChange={(e) => setSelectedCategory(e.target.value)}
-          className="w-full lg:w-60 p-2 border rounded-md bg-white"
-        >
-          {uniqueCategories.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-
-        <button
-          onClick={() => {
-            setSearchTerm("");
-            setSelectedCategory("All");
-            setSortKey("name");
-            setSortAsc(true);
-          }}
-          className="w-full lg:w-auto px-4 py-2 border rounded-md hover:bg-gray-50"
-        >
-          Reset
-        </button>
-
-        <div className="flex-1" />
-        {fetchError && <p className="text-red-600 text-sm">{fetchError}</p>}
+        <KpiCard
+          label="Low stock (≤5)"
+          value={String(products.filter((p) => (p.stockQuantity ?? 0) > 0 && (p.stockQuantity ?? 0) <= 5).length)}
+        />
+        <KpiCard
+          label="Out of stock"
+          value={String(products.filter((p) => (p.stockQuantity ?? 0) <= 0).length)}
+        />
       </div>
 
-      {/* ตารางสินค้า */}
-      <div className="overflow-x-auto bg-white shadow-md rounded-lg">
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
-          <thead className="bg-gray-50">
-            <tr>
-              <Th>Image</Th>
-              <Th sortable onClick={() => toggleSort("name")} active={sortKey === "name"} asc={sortAsc}>
-                Name
-              </Th>
-              <Th
-                sortable
-                onClick={() => toggleSort("category")}
-                active={sortKey === "category"}
-                asc={sortAsc}
-              >
-                Category
-              </Th>
-              <Th sortable onClick={() => toggleSort("price")} active={sortKey === "price"} asc={sortAsc}>
-                Price
-              </Th>
-              <Th sortable onClick={() => toggleSort("stock")} active={sortKey === "stock"} asc={sortAsc}>
-                Stock
-              </Th>
-              <Th>Actions</Th>
-            </tr>
-          </thead>
+      {/* Toolbar */}
+      <div className="items-center justify-between rounded-2xl border border-gray-200 bg-white p-4 shadow-sm md:flex">
+        <div className="flex flex-1 flex-col gap-3 md:flex-row md:items-center">
+          <div className="relative md:w-80">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search name or category…"
+              className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-200"
+            />
+            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400">
+              ⌘K
+            </span>
+          </div>
 
-          <tbody className="bg-white divide-y divide-gray-200">
-            {sorted.map((product) => (
-              <tr key={product.id} className="hover:bg-gray-50">
-                <td className="px-4 py-3 whitespace-nowrap">
-                  <div className="h-12 w-12 relative rounded-md overflow-hidden bg-gray-100">
-                    <Image
-                      src={coverImage(product)}
-                      alt={product.name}
-                      fill
-                      sizes="48px"
-                      className="object-cover"
-                    />
-                  </div>
-                </td>
-
-                <td className="px-4 py-3 whitespace-nowrap font-medium text-gray-900">
-                  {product.name}
-                </td>
-
-                <td className="px-4 py-3 whitespace-nowrap text-gray-600">
-                  {product.category}
-                </td>
-
-                <td className="px-4 py-3 whitespace-nowrap text-gray-700">
-                  {THB.format(product.price ?? 0)}
-                </td>
-
-                <td className="px-4 py-3 whitespace-nowrap">
-                  {stockBadge(product.stockQuantity)}
-                </td>
-
-                <td className="px-4 py-3 whitespace-nowrap">
-                  <div className="flex items-center gap-3">
-                    <Link
-                      href={`/admin/products/edit/${product.id}`}
-                      className="text-indigo-600 hover:text-indigo-900"
-                    >
-                      Edit
-                    </Link>
-                    <button
-                      onClick={() => handleDelete(product.id)}
-                      disabled={deletingId === product.id}
-                      className="text-red-600 hover:text-red-900 disabled:opacity-60"
-                    >
-                      {deletingId === product.id ? "Deleting..." : "Delete"}
-                    </button>
-                  </div>
-                </td>
-              </tr>
+          <select
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm"
+          >
+            {categories.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
             ))}
+          </select>
 
-            {sorted.length === 0 && (
-              <tr>
-                <td className="px-6 py-8 text-center text-gray-500" colSpan={6}>
-                  No products found.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => toggleSort("name")}
+              className={btnSortCls(sortKey === "name")}
+              title="Sort by name"
+            >
+              Name {sortKey === "name" ? (sortAsc ? "▲" : "▼") : ""}
+            </button>
+            <button
+              onClick={() => toggleSort("price")}
+              className={btnSortCls(sortKey === "price")}
+              title="Sort by price"
+            >
+              Price {sortKey === "price" ? (sortAsc ? "▲" : "▼") : ""}
+            </button>
+            <button
+              onClick={() => toggleSort("stock")}
+              className={btnSortCls(sortKey === "stock")}
+              title="Sort by stock"
+            >
+              Stock {sortKey === "stock" ? (sortAsc ? "▲" : "▼") : ""}
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-3 flex items-center gap-2 md:mt-0">
+          <button
+            onClick={() => setView("table")}
+            className={`rounded-lg px-3 py-1.5 text-sm ${
+              view === "table" ? "bg-gray-900 text-white" : "border border-gray-200 bg-white text-gray-700"
+            }`}
+          >
+            Table
+          </button>
+          <button
+            onClick={() => setView("grid")}
+            className={`rounded-lg px-3 py-1.5 text-sm ${
+              view === "grid" ? "bg-gray-900 text-white" : "border border-gray-200 bg-white text-gray-700"
+            }`}
+          >
+            Grid
+          </button>
+
+          <button
+            onClick={() => {
+              setQuery("");
+              setCategory("All");
+              setSortKey("name");
+              setSortAsc(true);
+            }}
+            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+          >
+            Reset
+          </button>
+        </div>
       </div>
 
-      {/* หมายเหตุเล็ก ๆ */}
-      <p className="text-xs text-gray-500 mt-3">
-        * Stock คือยอดรวมทุกสี/ไซส์ ถ้าอยากดูรายสี/ไซส์ให้เข้าหน้า Edit
+      {/* Views */}
+      {view === "grid" ? (
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+          {sorted.map((p) => (
+            <div key={p.id} className="group rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+              <div className="relative h-40 w-full overflow-hidden rounded-xl bg-gray-100">
+                <Image src={coverImage(p)} alt={p.name} fill sizes="(max-width:768px) 50vw, 25vw" className="object-cover transition-transform duration-300 group-hover:scale-105" />
+              </div>
+              <div className="mt-3 space-y-1">
+                <div className="truncate text-sm font-medium text-gray-900">{p.name}</div>
+                <div className="truncate text-xs text-gray-500">{p.category}</div>
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold">{THB.format(p.price ?? 0)}</div>
+                  {stockBadge(p.stockQuantity)}
+                </div>
+              </div>
+              <div className="mt-3 flex items-center justify-end gap-2">
+                <Link
+                  href={`/admin/products/edit/${p.id}`}
+                  className="rounded-md bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                >
+                  Edit
+                </Link>
+                <button
+                  onClick={() => handleDelete(p.id)}
+                  className="rounded-md bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
+                  disabled={deletingId === p.id}
+                >
+                  {deletingId === p.id ? "Deleting…" : "Delete"}
+                </button>
+              </div>
+            </div>
+          ))}
+          {sorted.length === 0 && <Empty />}
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-2xl border border-gray-200 bg-white shadow-sm">
+          <table className="min-w-full text-sm">
+            <thead className="sticky top-0 z-10 bg-gray-50">
+              <tr className="border-b border-gray-100 text-left text-xs uppercase tracking-wider text-gray-500">
+                <Th>Image</Th>
+                <Th sortable onClick={() => toggleSort("name")} active={sortKey === "name"} asc={sortAsc}>
+                  Name
+                </Th>
+                <Th sortable onClick={() => toggleSort("category")} active={sortKey === "category"} asc={sortAsc}>
+                  Category
+                </Th>
+                <Th sortable onClick={() => toggleSort("price")} active={sortKey === "price"} asc={sortAsc}>
+                  Price
+                </Th>
+                <Th sortable onClick={() => toggleSort("stock")} active={sortKey === "stock"} asc={sortAsc}>
+                  Stock
+                </Th>
+                <Th className="text-right">Action</Th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {sorted.map((p) => (
+                <tr key={p.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-3">
+                    <div className="relative h-12 w-12 overflow-hidden rounded-md bg-gray-100">
+                      <Image src={coverImage(p)} alt={p.name} fill sizes="48px" className="object-cover" />
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 font-medium text-gray-900">{p.name}</td>
+                  <td className="px-4 py-3 text-gray-600">{p.category}</td>
+                  <td className="px-4 py-3">{THB.format(p.price ?? 0)}</td>
+                  <td className="px-4 py-3">{stockBadge(p.stockQuantity)}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-2">
+                      <Link
+                        href={`/admin/products/edit/${p.id}`}
+                        className="rounded-md bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                      >
+                        Edit
+                      </Link>
+                      <button
+                        onClick={() => handleDelete(p.id)}
+                        className="rounded-md bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
+                        disabled={deletingId === p.id}
+                      >
+                        {deletingId === p.id ? "Deleting…" : "Delete"}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {sorted.length === 0 && (
+                <tr>
+                  <td colSpan={6}>
+                    <Empty />
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Error */}
+      {fetchError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{fetchError}</div>
+      )}
+
+      {/* Footnote */}
+      <p className="text-xs text-gray-500">
+        * Stock คือยอดรวมทุกสี/ไซส์ — รายละเอียดสต็อกย่อยดูในหน้า Edit
       </p>
     </div>
   );
 }
 
-/** Small TH component for sortable headers */
+/* ---------------- Small UI components ---------------- */
+
+function KpiCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="text-xs uppercase tracking-wide text-gray-500">{label}</div>
+      <div className="mt-1 text-2xl font-semibold text-gray-900">{value}</div>
+    </div>
+  );
+}
+
+function Empty() {
+  return (
+    <div className="flex h-40 w-full items-center justify-center text-sm text-gray-500">
+      No products found.
+    </div>
+  );
+}
+
 function Th({
   children,
   sortable = false,
   onClick,
   active,
   asc,
+  className = "",
 }: {
   children: React.ReactNode;
   sortable?: boolean;
   onClick?: () => void;
   active?: boolean;
   asc?: boolean;
+  className?: string;
 }) {
   return (
     <th
-      className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${
-        sortable ? "text-gray-600 cursor-pointer select-none" : "text-gray-500"
+      className={`px-4 py-3 text-left text-xs font-medium uppercase tracking-wider ${className} ${
+        sortable ? "cursor-pointer text-gray-600" : "text-gray-500"
       }`}
       onClick={onClick}
     >
@@ -341,5 +449,46 @@ function Th({
         )}
       </div>
     </th>
+  );
+}
+
+function btnSortCls(active: boolean) {
+  return `rounded-lg px-3 py-1.5 text-sm ${
+    active ? "bg-gray-900 text-white" : "border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+  }`;
+}
+
+/* ---------------- Skeletons ---------------- */
+
+function ToolbarSkeleton() {
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="flex items-center gap-3">
+        <div className="h-9 w-80 animate-pulse rounded-xl bg-gray-100" />
+        <div className="h-9 w-40 animate-pulse rounded-xl bg-gray-100" />
+        <div className="h-9 w-24 animate-pulse rounded-xl bg-gray-100 ml-auto" />
+        <div className="h-9 w-24 animate-pulse rounded-xl bg-gray-100" />
+      </div>
+    </div>
+  );
+}
+
+function CardsRowSkeleton() {
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div key={i} className="h-24 animate-pulse rounded-2xl bg-gray-100" />
+      ))}
+    </div>
+  );
+}
+
+function TableSkeleton() {
+  return (
+    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div key={i} className="h-14 animate-pulse border-b border-gray-100 bg-gray-50 last:border-0" />
+      ))}
+    </div>
   );
 }
