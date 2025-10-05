@@ -38,7 +38,6 @@ export default function CartPage() {
           {items.map((it) => (
             <div key={`${it.productId}-${it.color}-${it.size}`} className="flex items-center gap-4 border-b pb-4">
               <div className="relative h-20 w-20 rounded overflow-hidden bg-gray-100">
-                {/* ถ้าภาพเป็น external อย่าลืม config next.config.js domains */}
                 <Image src={it.image} alt={it.name} fill className="object-cover" />
               </div>
 

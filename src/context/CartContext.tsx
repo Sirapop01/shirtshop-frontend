@@ -125,7 +125,6 @@ export function CartProvider({ children }: { children: ReactNode }) {
     return () => {
       mounted.current = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const addItem = async (i: CartItem) => {

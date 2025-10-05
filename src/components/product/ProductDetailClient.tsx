@@ -44,7 +44,6 @@ export default function ProductDetailClient({ product }: ProductDetailClientProp
 
   const variantStocks = product?.variantStocks ?? [];
 
-  /** รวมสีที่มีในสต็อกจาก variantStocks (unique) */
   const colorOptions = useMemo(() => {
     const s = new Set<string>();
     for (const v of variantStocks) {
