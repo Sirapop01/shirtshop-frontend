@@ -4,10 +4,12 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useCart } from "@/context/CartContext";
-import { useAuth } from "@/context/AuthContext"; // ✅ ใช้ Context
+import { useAuth } from "@/context/AuthContext";
 
 export default function Navbar() {
+  const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [openMobile, setOpenMobile] = useState(false);
   const [openMenu, setOpenMenu] = useState(false);
@@ -16,39 +18,31 @@ export default function Navbar() {
   const { items } = useCart();
   const cartCount = items.reduce((sum, i) => sum + i.quantity, 0);
 
-  // ✅ ดึงสถานะจาก AuthContext
   const { user, logout, authLoading } = useAuth();
   const isLoggedIn = !!user;
 
   useEffect(() => {
     setMounted(true);
 
-    // click outside ปิด popover
     const onClickOutside = (e: MouseEvent) => {
-      if (!menuBtnRef.current) return;
       const target = e.target as Node;
       const pop = document.getElementById("navbar-popover");
-      if (pop && !pop.contains(target) && !menuBtnRef.current.contains(target)) {
+      if (pop && !pop.contains(target) && !menuBtnRef.current?.contains(target)) {
         setOpenMenu(false);
       }
     };
-    document.addEventListener("click", onClickOutside);
-
-    // Esc ปิดทุกอย่าง
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setOpenMenu(false);
         setOpenMobile(false);
       }
     };
-    document.addEventListener("keydown", onKey);
-
-    // ปิด drawer เมื่อขยายจอเกิน md
     const onResize = () => {
       if (window.innerWidth >= 768) setOpenMobile(false);
     };
+    document.addEventListener("click", onClickOutside);
+    document.addEventListener("keydown", onKey);
     window.addEventListener("resize", onResize);
-
     return () => {
       document.removeEventListener("click", onClickOutside);
       document.removeEventListener("keydown", onKey);
@@ -56,54 +50,51 @@ export default function Navbar() {
     };
   }, []);
 
-  // lock scroll ตอนเปิด drawer
   useEffect(() => {
     if (!mounted) return;
     document.body.style.overflow = openMobile ? "hidden" : "";
   }, [openMobile, mounted]);
+
+  const onSearch = (q: string) => {
+    const v = q.trim();
+    if (v) router.push(`/search?q=${encodeURIComponent(v)}`);
+  };
 
   if (!mounted) return null; // กัน hydration mismatch
 
   return (
     <header className="sticky top-0 z-50 bg-white/80 backdrop-blur border-b">
       <div className="mx-auto max-w-7xl px-3 md:px-6">
-        {/* แถวบน */}
+        {/* Top row */}
         <div className="grid grid-cols-12 items-center gap-3 h-16">
-          {/* โลโก้ซ้าย */}
+          {/* Logo */}
           <div className="col-span-6 md:col-span-3 flex items-center gap-3">
             <Link href="/" className="flex items-center gap-2" aria-label="StyleWhere home">
-              <div className="relative h-8 w-[120px] md:h-9 md:w-[140px]">
-                <Image
-                  src="/logo.png"
-                  alt="StyleWhere"
-                  fill
-                  sizes="(min-width: 768px) 140px, 120px"
-                  priority
-                  style={{ objectFit: "contain", objectPosition: "left center" }}
-                />
-              </div>
-              <span className="hidden sm:inline text-2xl font-semibold tracking-wide">
-                StyleWhere
-              </span>
+              {/* ใช้ width/height เพื่อลด warning ของ next/image */}
+              <Image
+                src="/logo.png"
+                alt="StyleWhere"
+                width={140}
+                height={36}
+                priority
+                style={{ height: "auto", width: "140px" }}
+              />
+              <span className="hidden sm:inline text-2xl font-semibold tracking-wide">StyleWhere</span>
             </Link>
           </div>
 
-          {/* Search กลาง (desktop only) */}
+          {/* Search (desktop) */}
           <div className="col-span-12 md:col-span-6 hidden md:flex justify-center">
-            <SearchBox />
+            <SearchBox onSearch={onSearch} />
           </div>
 
-          {/* ปุ่มขวา */}
+          {/* Right controls */}
           <div className="col-span-6 md:col-span-3 flex items-center justify-end gap-2 relative">
-            {/* ขณะกำลังเช็ค auth */}
             {authLoading ? (
               <div className="h-8 w-28 rounded bg-gray-100 animate-pulse" aria-hidden />
             ) : !isLoggedIn ? (
               <>
-                <Link
-                  href="/login"
-                  className="rounded border px-3 py-1.5 text-sm hover:bg-gray-50"
-                >
+                <Link href="/login" className="rounded border px-3 py-1.5 text-sm hover:bg-gray-50">
                   Login
                 </Link>
                 {/* Hamburger (mobile) */}
@@ -119,7 +110,7 @@ export default function Navbar() {
               </>
             ) : (
               <>
-                {/* ตะกร้า + badge */}
+                {/* Cart + badge */}
                 <Link
                   href="/cart"
                   className="inline-flex items-center justify-center rounded border px-2 py-1 relative"
@@ -137,14 +128,16 @@ export default function Navbar() {
                   )}
                 </Link>
 
-                {/* ปุ่มสามขีด -> popover */}
+                {/* User menu */}
                 <button
                   ref={menuBtnRef}
                   type="button"
                   className="inline-flex items-center justify-center rounded border px-2 py-1"
                   onClick={() => setOpenMenu((v) => !v)}
                   aria-label="Open user menu"
+                  aria-haspopup="menu"
                   aria-expanded={openMenu}
+                  aria-controls="navbar-popover"
                 >
                   <IconMenu strokeWidth={1.8} />
                 </button>
@@ -152,37 +145,31 @@ export default function Navbar() {
                 {openMenu && (
                   <div
                     id="navbar-popover"
+                    role="menu"
                     className="absolute right-0 top-[120%] w-64 rounded-xl border bg-white shadow-xl p-4 z-[60]"
                   >
-                    <ul className="space-y-4 text-center">
-                      <li>
-                        <Link
-                          href="/profile"
-                          className="block text-lg hover:opacity-80"
-                          onClick={() => setOpenMenu(false)}
-                        >
-                          My Account
-                        </Link>
-                      </li>
-                      <li>
-                        <Link
-                          href="/cart"
-                          className="block text-lg hover:opacity-80"
-                          onClick={() => setOpenMenu(false)}
-                        >
-                          My purchases
-                        </Link>
-                      </li>
-                      <li>
+                    <ul className="space-y-2 text-sm">
+                      <MenuLink href="/orders" onClick={() => setOpenMenu(false)}>
+                        คำสั่งซื้อของฉัน
+                      </MenuLink>
+                      <MenuLink href="/addresses" onClick={() => setOpenMenu(false)}>
+                        ที่อยู่จัดส่ง
+                      </MenuLink>
+                      <MenuLink href="/profile" onClick={() => setOpenMenu(false)}>
+                        โปรไฟล์
+                      </MenuLink>
+                      <li className="pt-2 mt-2 border-t">
                         <button
                           type="button"
-                          className="block w-full text-lg hover:opacity-80"
+                          className="w-full text-left px-2 py-2 rounded hover:bg-gray-50"
                           onClick={() => {
                             setOpenMenu(false);
-                            logout(); // ✅ ใช้ logout จาก Context แทนลบ localStorage เอง
+                            logout();
+                            router.push("/login");
                           }}
+                          role="menuitem"
                         >
-                          Log Out
+                          ออกจากระบบ
                         </button>
                       </li>
                     </ul>
@@ -193,19 +180,19 @@ export default function Navbar() {
           </div>
         </div>
 
-        {/* Search (mobile only) */}
+        {/* Search (mobile) */}
         <div className="md:hidden py-2">
-          <SearchBox />
+          <SearchBox onSearch={onSearch} />
         </div>
 
-        {/* เมนูหลัก (desktop) */}
+        {/* Main nav (desktop) */}
         <nav className="hidden md:flex h-12 items-center justify-center gap-8 text-gray-700">
           <Link href="/shirts" className="hover:text-black">Shirts</Link>
           <Link href="/for-you" className="hover:text-black">For you</Link>
           <Link href="/products" className="hover:text-black">All products</Link>
         </nav>
 
-        {/* Drawer มือถือ */}
+        {/* Mobile drawer */}
         {openMobile && (
           <>
             <button
@@ -233,15 +220,28 @@ export default function Navbar() {
               </div>
 
               <div className="mb-3">
-                <SearchBox />
+                <SearchBox onSearch={(q) => { onSearch(q); setOpenMobile(false); }} />
               </div>
 
               <nav className="flex flex-col gap-2 text-gray-700">
-                <Link href="/shirts" className="rounded px-2 py-2 hover:bg-gray-50">Shirts</Link>
-                <Link href="/for-you" className="rounded px-2 py-2 hover:bg-gray-50">For you</Link>
-                <Link href="/products" className="rounded px-2 py-2 hover:bg-gray-50">All products</Link>
-                {!isLoggedIn && (
-                  <Link href="/login" className="rounded px-2 py-2 border text-center mt-1">
+                <Link href="/shirts" className="rounded px-2 py-2 hover:bg-gray-50" onClick={() => setOpenMobile(false)}>Shirts</Link>
+                <Link href="/for-you" className="rounded px-2 py-2 hover:bg-gray-50" onClick={() => setOpenMobile(false)}>For you</Link>
+                <Link href="/products" className="rounded px-2 py-2 hover:bg-gray-50" onClick={() => setOpenMobile(false)}>All products</Link>
+
+                {isLoggedIn ? (
+                  <>
+                    <Link href="/orders" className="rounded px-2 py-2 hover:bg-gray-50" onClick={() => setOpenMobile(false)}>คำสั่งซื้อของฉัน</Link>
+                    <Link href="/addresses" className="rounded px-2 py-2 hover:bg-gray-50" onClick={() => setOpenMobile(false)}>ที่อยู่จัดส่ง</Link>
+                    <Link href="/profile" className="rounded px-2 py-2 hover:bg-gray-50" onClick={() => setOpenMobile(false)}>โปรไฟล์</Link>
+                    <button
+                      className="rounded px-2 py-2 text-left border mt-1"
+                      onClick={() => { setOpenMobile(false); logout(); router.push("/login"); }}
+                    >
+                      ออกจากระบบ
+                    </button>
+                  </>
+                ) : (
+                  <Link href="/login" className="rounded px-2 py-2 border text-center mt-1" onClick={() => setOpenMobile(false)}>
                     Login
                   </Link>
                 )}
@@ -256,10 +256,15 @@ export default function Navbar() {
 
 /* ---------------------- Subcomponents ---------------------- */
 
-function SearchBox() {
+function SearchBox({ onSearch }: { onSearch: (q: string) => void }) {
+  const [q, setQ] = useState("");
   return (
-    <div className="flex w-full max-w-xl items-center gap-2 rounded border px-3 py-2 bg-white">
-      <svg width="18" height="18" viewBox="0 0 24 24" className="text-gray-400">
+    <form
+      onSubmit={(e) => { e.preventDefault(); onSearch(q); }}
+      className="flex w-full max-w-xl items-center gap-2 rounded border px-3 py-2 bg-white"
+      role="search"
+    >
+      <svg width="18" height="18" viewBox="0 0 24 24" className="text-gray-400" aria-hidden="true">
         <path
           d="M21 21l-4.35-4.35M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z"
           fill="none"
@@ -271,14 +276,34 @@ function SearchBox() {
         type="search"
         placeholder="Search shirts…"
         className="w-full outline-none text-sm"
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            const q = (e.target as HTMLInputElement).value;
-            window.location.href = `/search?q=${encodeURIComponent(q)}`;
-          }
-        }}
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        aria-label="Search"
       />
-    </div>
+    </form>
+  );
+}
+
+function MenuLink({
+  href,
+  children,
+  onClick,
+}: {
+  href: string;
+  children: React.ReactNode;
+  onClick?: () => void;
+}) {
+  return (
+    <li>
+      <Link
+        href={href}
+        className="block px-2 py-2 rounded hover:bg-gray-50"
+        onClick={onClick}
+        role="menuitem"
+      >
+        {children}
+      </Link>
+    </li>
   );
 }
 
@@ -289,6 +314,7 @@ function IconMenu({ strokeWidth = 1.5 }: { strokeWidth?: number }) {
     </svg>
   );
 }
+
 function IconCart() {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
