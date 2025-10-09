@@ -185,11 +185,9 @@ export default function Navbar() {
           <SearchBox onSearch={onSearch} />
         </div>
 
-        {/* Main nav (desktop) */}
+        {/* Main nav (desktop) - Removed */}
         <nav className="hidden md:flex h-12 items-center justify-center gap-8 text-gray-700">
-          <Link href="/shirts" className="hover:text-black">Shirts</Link>
-          <Link href="/for-you" className="hover:text-black">For you</Link>
-          <Link href="/products" className="hover:text-black">All products</Link>
+          {/* Links removed as requested */}
         </nav>
 
         {/* Mobile drawer */}
@@ -224,9 +222,7 @@ export default function Navbar() {
               </div>
 
               <nav className="flex flex-col gap-2 text-gray-700">
-                <Link href="/shirts" className="rounded px-2 py-2 hover:bg-gray-50" onClick={() => setOpenMobile(false)}>Shirts</Link>
-                <Link href="/for-you" className="rounded px-2 py-2 hover:bg-gray-50" onClick={() => setOpenMobile(false)}>For you</Link>
-                <Link href="/products" className="rounded px-2 py-2 hover:bg-gray-50" onClick={() => setOpenMobile(false)}>All products</Link>
+                {/* Links removed as requested */}
 
                 {isLoggedIn ? (
                   <>
