@@ -20,19 +20,19 @@ interface ProductDetailClientProps {
 }
 
 const MySwal = withReactContent(Swal);
-const AUTH_KEY = "shirtshop_auth";
+const AUTH_KEY = "accessToken"; 
 
 
 function isLoggedIn() {
   try {
-    const raw = localStorage.getItem(AUTH_KEY);
-    if (!raw) return false;
-    const obj = JSON.parse(raw);
-    return !!obj?.accessToken; // โครงตามที่คุณเก็บ
+    const token =
+      sessionStorage.getItem(AUTH_KEY) || localStorage.getItem(AUTH_KEY);
+    return !!token;
   } catch {
     return false;
   }
 }
+
 export default function ProductDetailClient({ product }: ProductDetailClientProps) {
 
   const router = useRouter();
@@ -44,7 +44,6 @@ export default function ProductDetailClient({ product }: ProductDetailClientProp
 
   const variantStocks = product?.variantStocks ?? [];
 
-  /** รวมสีที่มีในสต็อกจาก variantStocks (unique) */
   const colorOptions = useMemo(() => {
     const s = new Set<string>();
     for (const v of variantStocks) {

@@ -1,12 +1,13 @@
+// src/app/login/page.tsx
 "use client";
 
 import SocialButtons from "@/components/auth/SocialButtons";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { useAuth } from "@/context/AuthContext"; // ✅ ใช้ AuthContext
 
-// สร้าง Type สำหรับ User ให้ตรงกับ UserResponse.java
-type UserResponse = {
+export type UserResponse = {
   id: string;
   email: string;
   username?: string;
@@ -14,66 +15,44 @@ type UserResponse = {
   lastName?: string;
   displayName?: string;
   phone?: string;
-  profileImageUrl?: string; // <--- แก้จาก avatarUrl
+  profileImageUrl?: string;
   emailVerified?: boolean;
 };
 
-// ใช้ UserResponse Type ที่สร้างขึ้น
 type LoginResponse = {
   accessToken: string;
-  refreshToken?: string;
+  refreshToken?: string | null;
   tokenType?: string;
-  user: UserResponse;
+  user?: UserResponse;
 };
 
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080/api";
-const API_BASE = RAW_API_BASE.replace(/\/$/, ""); // ป้องกัน / ซ้ำ
+const API_BASE = RAW_API_BASE.replace(/\/$/, ""); // กัน / ซ้ำ
 
 export default function Login() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const { user, login } = useAuth();
+
+  const [email, setEmail] = useState("user@gmail.com");
+  const [password, setPassword] = useState("user1234");
+  const [remember, setRemember] = useState(true);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const saveAuth = (data: LoginResponse) => {
-    localStorage.setItem(
-      "shirtshop_auth",
-      JSON.stringify({
-        user: data.user,
-        accessToken: data.accessToken,
-        refreshToken: data.refreshToken ?? null,
-        tokenType: data.tokenType ?? "Bearer",
-      })
-    );
-  };
-
-  // ---- Helper: อ่าน token ได้ทั้งจาก hash และ query
+  // ---- Helper: อ่าน token จาก hash/query (รองรับ social callback)
   const readTokensFromLocation = () => {
     if (typeof window === "undefined") return null;
 
-    // hash: #accessToken=...&refreshToken=...&tokenType=...
-    const hash = window.location.hash?.replace(/^#/, "");
-    const hashParams = new URLSearchParams(hash || "");
-
-    // query: ?accessToken=... (กันกรณี SuccessHandler เผลอส่งแบบ query)
+    const hashParams = new URLSearchParams((window.location.hash || "").replace(/^#/, ""));
     const queryParams = new URLSearchParams(window.location.search || "");
 
-    // เปลี่ยนจาก "accessToken" เป็น "token"
-    const token =
-      hashParams.get("token") || queryParams.get("token");
+    // บาง SuccessHandler ส่งชื่อ param เป็น token (ไม่ใช่ accessToken)
+    const token = hashParams.get("token") || queryParams.get("token");
     const refreshToken =
       hashParams.get("refreshToken") || queryParams.get("refreshToken") || undefined;
-    const tokenType =
-      hashParams.get("tokenType") ||
-      queryParams.get("tokenType") ||
-      "Bearer";
 
-    // เช็คตัวแปรใหม่
     if (!token) return null;
-
-    // คืนค่า object ให้มี key ชื่อ accessToken เหมือนเดิมเพื่อให้ส่วนอื่นทำงานต่อได้
-    return { accessToken: token, refreshToken, tokenType };
+    return { accessToken: token, refreshToken };
   };
 
   // -- กันยิงซ้ำใน Next dev strict mode
@@ -89,11 +68,11 @@ export default function Login() {
 
     (async () => {
       try {
+        // ดึงข้อมูลผู้ใช้ด้วย token ที่เพิ่งได้มา
         const meRes = await fetch(`${API_BASE}/auth/me`, {
-          headers: { Authorization: `${tokens.tokenType} ${tokens.accessToken}` },
+          headers: { Authorization: `Bearer ${tokens.accessToken}` },
           cache: "no-store",
         });
-
         if (!meRes.ok) {
           let message = "cannot fetch user profile";
           try {
@@ -102,17 +81,12 @@ export default function Login() {
           } catch { }
           throw new Error(message);
         }
+        const me = (await meRes.json()) as UserResponse;
 
-        const me = await meRes.json();
+        // ✅ เรียก AuthContext.login ให้จัดการเก็บ token + state
+        login(tokens.accessToken, tokens.refreshToken ?? null, me, true);
 
-        saveAuth({
-          accessToken: tokens.accessToken,
-          refreshToken: tokens.refreshToken,
-          tokenType: tokens.tokenType,
-          user: me,
-        });
-
-        // ลบทั้ง hash และ query ออกจาก URL ให้สะอาด
+        // ล้าง hash/query ใน URL
         const cleanPath = window.location.pathname;
         window.history.replaceState({}, document.title, cleanPath);
 
@@ -123,7 +97,14 @@ export default function Login() {
         setErr("อ่านข้อมูลหลังเข้าสู่ระบบด้วยโซเชียลไม่สำเร็จ");
       }
     })();
-  }, [router]);
+  }, [login, router]);
+
+  // ถ้า login อยู่แล้ว ไม่ต้องอยู่หน้า /login
+  useEffect(() => {
+    if (user) {
+      router.replace("/");
+    }
+  }, [user, router]);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -155,15 +136,18 @@ export default function Login() {
       const data = (await res.json()) as LoginResponse;
       if (!data?.accessToken) throw new Error("รูปแบบผลลัพธ์จากเซิร์ฟเวอร์ไม่ถูกต้อง");
 
-      // ถ้ายังไม่มี user ใน body ให้ดึงจาก /auth/me
-      if (!data.user) {
+      // ถ้า body ไม่มี user → ดึง /auth/me
+      let me: UserResponse | undefined = data.user;
+      if (!me) {
         const meRes = await fetch(`${API_BASE}/auth/me`, {
           headers: { Authorization: `Bearer ${data.accessToken}` },
         });
-        data.user = meRes.ok ? await meRes.json() : { id: "", email };
+        me = meRes.ok ? ((await meRes.json()) as UserResponse) : { id: "", email };
       }
 
-      saveAuth(data);
+      // ✅ ให้ AuthContext.login จัดการ persist token + set state
+      login(data.accessToken, data.refreshToken ?? null, me, remember);
+
       router.push("/");
       router.refresh();
     } catch (error: any) {
@@ -229,6 +213,16 @@ export default function Login() {
               required
             />
           </div>
+
+          {/* ✅ Remember me */}
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+            />
+            <span className="text-sm">Remember me</span>
+          </label>
 
           <div className="flex justify-between items-center">
             <a href="/forgot-password" className="text-sm underline">
