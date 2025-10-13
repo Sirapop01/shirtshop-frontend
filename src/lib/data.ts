@@ -1,8 +1,9 @@
 // lib/data.ts
 import { Product, ImageInfo, VariantStock } from "@/types";
 
-const API_BASE = process.env.API_BASE || "http://localhost:8080";
-const api = (path: string) => `${API_BASE}${path}`;
+const BACKEND_BASE_OAUTH = process.env.NEXT_PUBLIC_BASE_OAUTH; 
+
+const api = (path: string) => `${BACKEND_BASE_OAUTH}${path}`;
 
 
 const toNumber = (v: unknown, fallback = 0) => {
