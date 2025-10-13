@@ -1,11 +1,10 @@
 // src/app/login/page.tsx
 "use client";
 
-import SocialButtons from "@/components/auth/SocialButtons";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-import { useAuth } from "@/context/AuthContext"; // ✅ ใช้ AuthContext
+import { useEffect, useState } from "react";
+import { useAuth } from "@/context/AuthContext";
 
 export type UserResponse = {
   id: string;
@@ -38,66 +37,6 @@ export default function Login() {
   const [remember, setRemember] = useState(true);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-
-  // ---- Helper: อ่าน token จาก hash/query (รองรับ social callback)
-  const readTokensFromLocation = () => {
-    if (typeof window === "undefined") return null;
-
-    const hashParams = new URLSearchParams((window.location.hash || "").replace(/^#/, ""));
-    const queryParams = new URLSearchParams(window.location.search || "");
-
-    // บาง SuccessHandler ส่งชื่อ param เป็น token (ไม่ใช่ accessToken)
-    const token = hashParams.get("token") || queryParams.get("token");
-    const refreshToken =
-      hashParams.get("refreshToken") || queryParams.get("refreshToken") || undefined;
-
-    if (!token) return null;
-    return { accessToken: token, refreshToken };
-  };
-
-  // -- กันยิงซ้ำใน Next dev strict mode
-  const handledRef = useRef(false);
-
-  // --- รองรับ callback จาก Social Login
-  useEffect(() => {
-    if (handledRef.current) return;
-    handledRef.current = true;
-
-    const tokens = readTokensFromLocation();
-    if (!tokens) return;
-
-    (async () => {
-      try {
-        // ดึงข้อมูลผู้ใช้ด้วย token ที่เพิ่งได้มา
-        const meRes = await fetch(`${API_BASE}/auth/me`, {
-          headers: { Authorization: `Bearer ${tokens.accessToken}` },
-          cache: "no-store",
-        });
-        if (!meRes.ok) {
-          let message = "cannot fetch user profile";
-          try {
-            const j = await meRes.json();
-            message = j?.message || j?.error || message;
-          } catch { }
-          throw new Error(message);
-        }
-        const me = (await meRes.json()) as UserResponse;
-
-        // ✅ เรียก AuthContext.login ให้จัดการเก็บ token + state
-        login(tokens.accessToken, tokens.refreshToken ?? null, me, true);
-
-        // ล้าง hash/query ใน URL
-        const cleanPath = window.location.pathname;
-        window.history.replaceState({}, document.title, cleanPath);
-
-        router.push("/");
-        router.refresh();
-      } catch (e: any) {
-        console.error(e);
-        setErr("อ่านข้อมูลหลังเข้าสู่ระบบด้วยโซเชียลไม่สำเร็จ");
-      }
-    })();
-  }, [login, router]);
 
   // ถ้า login อยู่แล้ว ไม่ต้องอยู่หน้า /login
   useEffect(() => {
@@ -214,7 +153,6 @@ export default function Login() {
             />
           </div>
 
-          {/* ✅ Remember me */}
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
@@ -252,7 +190,7 @@ export default function Login() {
             >
               <span>Register with StyleWhere</span>
             </button>
-            <SocialButtons />
+            {/* SocialButtons component removed */}
           </div>
         </form>
       </div>
