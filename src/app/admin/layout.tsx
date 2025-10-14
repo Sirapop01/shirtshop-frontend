@@ -13,6 +13,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [openSettings, setOpenSettings] = useState(false);
+  const [openOrders, setOpenOrders] = useState(true); // ⬅️ เพิ่ม state ด้านบนเหมือน openProducts
+
 
   // ปิด sidebar เมื่อ path เปลี่ยน
   useEffect(() => {
@@ -105,7 +107,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               </div>
             )}
 
-            <NavItem href="/admin/orders" label="Orders" icon={<span>🧾</span>} />
+            <button
+              type="button"
+              onClick={() => setOpenOrders((s) => !s)}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm text-gray-600 transition hover:bg-gray-50 hover:text-gray-900"
+            >
+              <span>🧾</span>
+              <span className="flex-1 text-left">Orders</span>
+              <span className="text-xs">{openOrders ? "▾" : "▸"}</span>
+            </button>
+
+            {openOrders && (
+              <div className="ml-6 space-y-1">
+                <NavItem href="/admin/orders" label="Check the order" />
+              </div>
+            )}
+            
             <NavItem href="/admin/customers" label="Customers" icon={<span>👥</span>} />
 
             <button
