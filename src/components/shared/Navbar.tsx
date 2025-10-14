@@ -4,12 +4,11 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useCart } from "@/context/CartContext";
 import { useAuth } from "@/context/AuthContext";
 
 export default function Navbar() {
-  const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [openMobile, setOpenMobile] = useState(false);
   const [openMenu, setOpenMenu] = useState(false);
@@ -55,11 +54,6 @@ export default function Navbar() {
     document.body.style.overflow = openMobile ? "hidden" : "";
   }, [openMobile, mounted]);
 
-  const onSearch = (q: string) => {
-    const v = q.trim();
-    if (v) router.push(`/search?q=${encodeURIComponent(v)}`);
-  };
-
   if (!mounted) return null; // กัน hydration mismatch
 
   return (
@@ -70,7 +64,6 @@ export default function Navbar() {
           {/* Logo */}
           <div className="col-span-6 md:col-span-3 flex items-center gap-3">
             <Link href="/" className="flex items-center gap-2" aria-label="StyleWhere home">
-              {/* ใช้ width/height เพื่อลด warning ของ next/image */}
               <Image
                 src="/logo.png"
                 alt="StyleWhere"
@@ -85,7 +78,7 @@ export default function Navbar() {
 
           {/* Search (desktop) */}
           <div className="col-span-12 md:col-span-6 hidden md:flex justify-center">
-            <SearchBox onSearch={onSearch} />
+            <SearchBox />
           </div>
 
           {/* Right controls */}
@@ -165,7 +158,7 @@ export default function Navbar() {
                           onClick={() => {
                             setOpenMenu(false);
                             logout();
-                            router.push("/login");
+                            // router.push("/login"); // การ logout จะ redirect ไปเองจาก AuthContext
                           }}
                           role="menuitem"
                         >
@@ -182,12 +175,12 @@ export default function Navbar() {
 
         {/* Search (mobile) */}
         <div className="md:hidden py-2">
-          <SearchBox onSearch={onSearch} />
+          <SearchBox />
         </div>
 
         {/* Main nav (desktop) - Removed */}
         <nav className="hidden md:flex h-12 items-center justify-center gap-8 text-gray-700">
-          {/* Links removed as requested */}
+          {/* Links can be added here if needed */}
         </nav>
 
         {/* Mobile drawer */}
@@ -218,12 +211,10 @@ export default function Navbar() {
               </div>
 
               <div className="mb-3">
-                <SearchBox onSearch={(q) => { onSearch(q); setOpenMobile(false); }} />
+                <SearchBox />
               </div>
 
               <nav className="flex flex-col gap-2 text-gray-700">
-                {/* Links removed as requested */}
-
                 {isLoggedIn ? (
                   <>
                     <Link href="/orders" className="rounded px-2 py-2 hover:bg-gray-50" onClick={() => setOpenMobile(false)}>คำสั่งซื้อของฉัน</Link>
@@ -231,7 +222,7 @@ export default function Navbar() {
                     <Link href="/profile" className="rounded px-2 py-2 hover:bg-gray-50" onClick={() => setOpenMobile(false)}>โปรไฟล์</Link>
                     <button
                       className="rounded px-2 py-2 text-left border mt-1"
-                      onClick={() => { setOpenMobile(false); logout(); router.push("/login"); }}
+                      onClick={() => { setOpenMobile(false); logout(); }}
                     >
                       ออกจากระบบ
                     </button>
@@ -252,11 +243,53 @@ export default function Navbar() {
 
 /* ---------------------- Subcomponents ---------------------- */
 
-function SearchBox({ onSearch }: { onSearch: (q: string) => void }) {
-  const [q, setQ] = useState("");
+function SearchBox() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const queryFromUrl = searchParams.get("q") || "";
+
+  // 1. State สำหรับ "ค่าในช่อง input" เท่านั้น
+  const [inputValue, setInputValue] = useState(queryFromUrl);
+
+  // 2. ✨ EFFECT 1: คอย Sync ค่าจาก URL มาใส่ในช่อง Input ✨
+  // Effect นี้จะทำงานเมื่อผู้ใช้กด back/forward หรือ URL เปลี่ยนแปลงจากภายนอก
+  useEffect(() => {
+    setInputValue(queryFromUrl);
+  }, [queryFromUrl]);
+
+  // 3. ✨ EFFECT 2: Debounce ค่าจากช่อง Input แล้วค่อยสั่งเปลี่ยน URL ✨
+  // Effect นี้จะทำงานเมื่อผู้ใช้ "พิมพ์" ในช่อง Input
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(() => {
+      const trimmedValue = inputValue.trim();
+
+      // ถ้าค่าที่พิมพ์ไม่ตรงกับค่าใน URL ปัจจุบัน
+      if (trimmedValue !== queryFromUrl) {
+        if (trimmedValue) {
+          // ถ้ามีคำค้นหา, ให้ navigate ไปยังหน้า /search
+          router.push(`/search?q=${encodeURIComponent(trimmedValue)}`);
+        } else if (pathname === "/search") {
+          // ถ้าคำค้นหาว่างเปล่า และเราอยู่ที่หน้า /search อยู่แล้ว
+          // ให้พากลับไปที่หน้าหลัก
+          router.push("/");
+        }
+      }
+    }, 500);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [inputValue, queryFromUrl, pathname, router]);
+
+
   return (
     <form
-      onSubmit={(e) => { e.preventDefault(); onSearch(q); }}
+      onSubmit={(e) => {
+        e.preventDefault();
+        const trimmedValue = inputValue.trim();
+        if (trimmedValue) {
+            router.push(`/search?q=${encodeURIComponent(trimmedValue)}`);
+        }
+      }}
       className="flex w-full max-w-xl items-center gap-2 rounded border px-3 py-2 bg-white"
       role="search"
     >
@@ -271,14 +304,15 @@ function SearchBox({ onSearch }: { onSearch: (q: string) => void }) {
       <input
         type="search"
         placeholder="Search shirts…"
-        className="w-full outline-none text-sm"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
+        className="w-full outline-none text-sm bg-transparent"
+        value={inputValue}
+        onChange={(e) => setInputValue(e.target.value)}
         aria-label="Search"
       />
     </form>
   );
 }
+
 
 function MenuLink({
   href,
