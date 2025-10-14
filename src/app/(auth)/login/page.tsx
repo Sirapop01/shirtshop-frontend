@@ -5,6 +5,8 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
+import { useCart } from "@/context/CartContext";
+import api from "@/lib/api";
 
 export type UserResponse = {
   id: string;
@@ -31,6 +33,7 @@ const API_BASE = RAW_API_BASE.replace(/\/$/, ""); // กัน / ซ้ำ
 export default function Login() {
   const router = useRouter();
   const { user, login } = useAuth();
+  const { refresh: refreshCart } = useCart();
 
   const [email, setEmail] = useState("user@gmail.com");
   const [password, setPassword] = useState("user1234");
@@ -75,7 +78,6 @@ export default function Login() {
       const data = (await res.json()) as LoginResponse;
       if (!data?.accessToken) throw new Error("รูปแบบผลลัพธ์จากเซิร์ฟเวอร์ไม่ถูกต้อง");
 
-      // ถ้า body ไม่มี user → ดึง /auth/me
       let me: UserResponse | undefined = data.user;
       if (!me) {
         const meRes = await fetch(`${API_BASE}/auth/me`, {
@@ -84,11 +86,35 @@ export default function Login() {
         me = meRes.ok ? ((await meRes.json()) as UserResponse) : { id: "", email };
       }
 
-      // ✅ ให้ AuthContext.login จัดการ persist token + set state
+      // 4. ให้ AuthContext.login จัดการ persist token + set state ก่อน
       login(data.accessToken, data.refreshToken ?? null, me, remember);
 
+      // ✨ --- START: MERGE GUEST CART LOGIC --- ✨
+      try {
+        // 5. อ่านข้อมูลตะกร้าของ Guest จาก localStorage
+        const guestCartJson = localStorage.getItem("cart"); // ❗️สำคัญ: ตรวจสอบ key "cart" ให้ถูกต้อง
+        if (guestCartJson) {
+          const guestCart = JSON.parse(guestCartJson);
+          if (guestCart.items && guestCart.items.length > 0) {
+            console.log("Merging guest cart with user's cart...", guestCart.items);
+            // 6. เรียก API /cart/merge โดยใช้ api instance ที่มี interceptor
+            await api.post('/api/cart/merge', { items: guestCart.items });
+            // 7. ล้างตะกร้าของ Guest ออกหลัง merge สำเร็จ
+            localStorage.removeItem("cart");
+          }
+        }
+      } catch (error) {
+        console.error("Failed to merge cart:", error);
+      }
+      // ✨ --- END: MERGE GUEST CART LOGIC --- ✨
+
+      // 8. สั่งให้ CartContext โหลดข้อมูลใหม่ล่าสุดจาก API
+      await refreshCart();
+
+      // 9. Redirect ไปยังหน้าแรก (หรือหน้า checkout)
       router.push("/");
       router.refresh();
+
     } catch (error: any) {
       setErr(error?.message || "เกิดข้อผิดพลาด");
     } finally {

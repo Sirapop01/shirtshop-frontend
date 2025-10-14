@@ -119,7 +119,7 @@ export default function OrdersPage() {
   const query = useMemo(() => {
     const qs = new URLSearchParams({ page: String(page), size: String(size) });
     const csv = tabToStatuses[tab];
-    if (csv) qs.set("status", csv);
+    if (csv) qs.set("statuses", csv);
     return qs.toString();
   }, [page, size, tab]);
 

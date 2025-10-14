@@ -310,8 +310,11 @@ export default function CheckoutPage() {
       <section className="rounded-xl border p-4">
         <h2 className="font-semibold mb-2">Order summary</h2>
 
-        {summaryItems ? (
+        {order && !summaryItems ? (
+          <p className="text-sm text-gray-500">Loading order summary...</p>
+        ) : summaryItems ? (
           <>
+            {/* แสดงรายการสินค้าจาก orderDetail ที่โหลดมาแล้ว */}
             <ul className="text-sm text-gray-700 divide-y">
               {summaryItems.map((it) => (
                 <li key={`${it.productId}-${it.color}-${it.size}`} className="py-1">
@@ -323,6 +326,7 @@ export default function CheckoutPage() {
           </>
         ) : (
           <>
+            {/* แสดงรายการสินค้าจาก cartItems (ก่อนสร้าง order) */}
             <ul className="text-sm text-gray-700 space-y-1">
               {cartItems.map((it) => (
                 <li key={`${it.productId}-${it.color}-${it.size}`}>
@@ -349,7 +353,6 @@ export default function CheckoutPage() {
         <section className="rounded-xl border p-4 space-y-4">
           <div className="flex items-start gap-6">
             <div className="border rounded-lg p-2">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={orderDetail?.promptpayQrUrl || order.promptpayQrUrl}
                 alt="PromptPay QR"
