@@ -279,9 +279,11 @@ export default function AdminDashboardPage() {
                 <div key={p.id} className="flex items-center justify-between">
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium text-gray-900">{p.name}</div>
-                    <div className="text-xs text-gray-500">{p.units} units</div>
+                    <div className="text-xs text-gray-500">{(p.units ?? 0)} units</div>
                   </div>
-                  <div className="text-sm font-medium">{formatBaht(p.revenue)}</div>
+                  <div className="text-sm font-medium">
+                    {formatBaht(Number(p.revenue ?? 0))}
+                  </div>
                 </div>
               ))}
               {!topProducts?.length && <EmptyHint text="No bestseller yet" />}
@@ -442,8 +444,10 @@ function StatusPill({ status }: { status: OrderItem["status"] }) {
 }
 
 /* ---------- Utils ---------- */
-function formatBaht(n: number) {
-  return new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", maximumFractionDigits: 2 }).format(n);
+function formatBaht(v: number | string | null | undefined) {
+  const n = Number(v ?? 0);
+  return new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB" })
+    .format(Number.isFinite(n) ? n : 0);
 }
 
 function barWidthPercent(value: number, arr?: CategoryBreakdown[] | null) {
