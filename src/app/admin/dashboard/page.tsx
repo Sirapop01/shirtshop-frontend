@@ -28,18 +28,33 @@ type LowStockItem = { id: string; name: string; sku?: string; stock: number };
 /* ---------- Date range helpers ---------- */
 type RangeKey = "today" | "7d" | "30d" | "ytd";
 function getRange(key: RangeKey) {
+  // ใช้ UTC ให้ตรงกับ Instant ฝั่ง BE
   const now = new Date();
-  const end = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59));
-  let start = new Date(end);
-  if (key === "today") start = new Date(end);
-  if (key === "7d") start.setUTCDate(end.getUTCDate() - 6);
-  if (key === "30d") start.setUTCDate(end.getUTCDate() - 29);
-  if (key === "ytd") start = new Date(Date.UTC(end.getUTCFullYear(), 0, 1));
+
+  // end = 23:59:59.999 ของ "วันนี้" (UTC)
+  const end = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999)
+  );
+
+  // start = 00:00:00.000 ของวันแรกในช่วง (UTC)
+  let start = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate(), 0, 0, 0, 0));
+
+  if (key === "7d") {
+    start.setUTCDate(end.getUTCDate() - 6); // รวมวันนี้ => ถอย 6 วัน
+  } else if (key === "30d") {
+    start.setUTCDate(end.getUTCDate() - 29);
+  } else if (key === "ytd") {
+    start = new Date(Date.UTC(end.getUTCFullYear(), 0, 1, 0, 0, 0, 0));
+  }
+
   return {
-    from: start.toISOString().slice(0, 10),
-    to: end.toISOString().slice(0, 10),
+    from: start.toISOString(),
+    to: end.toISOString(),
     label:
-      key === "today" ? "Today" : key === "7d" ? "Last 7 days" : key === "30d" ? "Last 30 days" : "Year to date",
+      key === "today" ? "Today" :
+      key === "7d"    ? "Last 7 days" :
+      key === "30d"   ? "Last 30 days" :
+                        "Year to date",
   };
 }
 
@@ -69,59 +84,81 @@ export default function AdminDashboardPage() {
 
   useEffect(() => {
   let mounted = true;
-  const withAuth = (headers: HeadersInit = {}) => ({
-    ...headers,
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  });
 
   async function load() {
     setLoading(true);
     setErr("");
-    const qs = `?from=${range.from}&to=${range.to}`;
+
+    const qs =
+      rangeKey === "today" ? `?lastDays=0` : `?from=${range.from}&to=${range.to}`;
 
     try {
-      // ✅ เพิ่ม /api/customers/count
-      const [
-        sumRes,
-        countRes,
-        trendRes,
-        catRes,
-        ordRes,
-        topRes,
-        lowRes,
-      ] = await Promise.all([
-        fetch(`http://localhost:8080/api/dashboard${qs}`, { headers: withAuth(), cache: "no-store" }),
-        fetch(`http://localhost:8080/api/customers/count`, { headers: withAuth(), cache: "no-store" }),
-        fetch(`http://localhost:8080/api/sales/daily${qs}`, { headers: withAuth(), cache: "no-store" }),
-        fetch(`http://localhost:8080/api/sales/by-category${qs}`, { headers: withAuth(), cache: "no-store" }),
-        fetch(`http://localhost:8080/api/orders/recent?limit=8`, { headers: withAuth(), cache: "no-store" }),
-        fetch(`http://localhost:8080/api/products/top${qs}`, { headers: withAuth(), cache: "no-store" }),
-        fetch(`http://localhost:8080/api/inventory/low-stock?limit=6`, { headers: withAuth(), cache: "no-store" }),
-      ]);
+      const [sumRes, countRes, trendRes, catRes, ordRes, topRes, lowRes] =
+        await Promise.all([
+          // ✅ สรุปช่วงเวลา
+          fetch(`http://localhost:8080/admin/analytics/summary${qs}`, {
+            headers: withAuth(),
+            cache: "no-store",
+          }),
+          // ลูกค้าทั้งหมด (all-time)
+          fetch(`http://localhost:8080/api/customers/count`, {
+            headers: withAuth(),
+            cache: "no-store",
+          }),
+          // รายวัน (จะ normalize ทีหลัง)
+          fetch(`http://localhost:8080/api/sales/daily${qs}`, {
+            headers: withAuth(),
+            cache: "no-store",
+          }),
+          // Sales by category
+          fetch(
+            `http://localhost:8080/admin/analytics/sales/by-category${qs}`,
+            { headers: withAuth(), cache: "no-store" },
+          ),
+          // ออเดอร์ล่าสุด
+          fetch(`http://localhost:8080/api/orders/recent?limit=8`, {
+            headers: withAuth(),
+            cache: "no-store",
+          }),
+          // Top products
+          fetch(`http://localhost:8080/admin/analytics/top-products${qs}`, {
+            headers: withAuth(),
+            cache: "no-store",
+          }),
+          // สินค้าใกล้หมด
+          fetch(`http://localhost:8080/api/inventory/low-stock?limit=6`, {
+            headers: withAuth(),
+            cache: "no-store",
+          }),
+        ]);
 
-      // base summary
-      let _summary: SummaryDTO = {
-        revenueToday: null,
-        totalSalesToday: null,
+      // ค่า default (กันการ์ดขึ้น None)
+      const _summary: SummaryDTO = {
+        revenueToday: 0,
+        totalSalesToday: 0,
         customersTotal: null,
-        revenueRangeTotal: null,
-        ordersRangeTotal: null,
+        revenueRangeTotal: 0,
+        ordersRangeTotal: 0,
       };
 
+      // map summary
       if (sumRes.ok) {
-        const s = (await sumRes.json()) as SummaryDTO;
-        _summary = { ..._summary, ...s };
+        const s: {
+          revenue?: number;
+          orders?: number;
+          averageOrderValue?: number;
+        } = await sumRes.json();
+        _summary.revenueRangeTotal = Number(s.revenue ?? 0);
+        _summary.ordersRangeTotal = Number(s.orders ?? 0);
       }
 
-      // ✅ set customersTotal จาก /count
+      // customers
       if (countRes.ok) {
         const obj = (await countRes.json()) as { customersTotal?: number };
         if (typeof obj?.customersTotal === "number") {
-          _summary.customersTotal = obj.customersTotal; // รับค่า 0 ด้วย
+          _summary.customersTotal = obj.customersTotal;
         }
       }
-
-      // ✅ fallback: ถ้ายัง null → ไปนับจาก /api/customers
       if (_summary.customersTotal == null) {
         try {
           const rc = await fetch(`http://localhost:8080/api/customers`, {
@@ -135,22 +172,19 @@ export default function AdminDashboardPage() {
         } catch {}
       }
 
-      // ส่วนอื่นคงเดิม
-      const _trend = trendRes.ok ? ((await trendRes.json()) as DailyPoint[]) : null;
-      const _cats  = catRes.ok ? ((await catRes.json()) as CategoryBreakdown[]) : null;
-      const _orders= ordRes.ok ? ((await ordRes.json()) as OrderItem[]) : null;
-      const _tops  = topRes.ok ? ((await topRes.json()) as TopProduct[]) : null;
-      const _low   = lowRes.ok ? ((await lowRes.json()) as LowStockItem[]) : [];
+      // ✅ normalize กราฟรายวัน
+      const rawTrend = trendRes.ok ? await trendRes.json() : null;
+      const _trend = normalizeRevenueDaily(rawTrend, rangeKey);
+
+      const _cats = catRes.ok ? ((await catRes.json()) as CategoryBreakdown[]) : null;
+      const _orders = ordRes.ok ? ((await ordRes.json()) as OrderItem[]) : null;
+      const _tops = topRes.ok ? ((await topRes.json()) as TopProduct[]) : null;
+      const _low = lowRes.ok ? ((await lowRes.json()) as LowStockItem[]) : [];
 
       if (!mounted) return;
       setSummary(_summary);
-      setTrend(_trend ?? genFakeTrend(rangeKey));
-      setByCategory(_cats ?? [
-        { category: "T-Shirts", value: 42 },
-        { category: "Hoodies", value: 28 },
-        { category: "Pants", value: 16 },
-        { category: "Accessories", value: 14 },
-      ]);
+      setTrend(_trend.length ? _trend : genFakeTrend(rangeKey));
+      setByCategory(_cats ?? []);
       setRecentOrders(_orders ?? []);
       setTopProducts(_tops ?? []);
       setLowStock(_low ?? []);
@@ -163,11 +197,21 @@ export default function AdminDashboardPage() {
   }
 
   load();
-  return () => { mounted = false; };
+  return () => {
+    mounted = false;
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [rangeKey, token]);
 
+  // คำนวณ AOV จากค่าที่โหลดได้ (ถ้า orders = 0 ให้ null เพื่อให้การ์ดแสดง "None")
   const aov = useMemo(() => {
-    if (!summary?.revenueRangeTotal || !summary?.ordersRangeTotal || summary.ordersRangeTotal === 0) return null;
+    if (
+      summary?.revenueRangeTotal == null ||
+      summary?.ordersRangeTotal == null ||
+      summary.ordersRangeTotal === 0
+    ) {
+      return null;
+    }
     return summary.revenueRangeTotal / summary.ordersRangeTotal;
   }, [summary]);
 
@@ -211,25 +255,44 @@ export default function AdminDashboardPage() {
           value={
             loading
               ? "…"
-              : summary?.revenueRangeTotal != null
-              ? formatBaht(summary.revenueRangeTotal)
-              : "None"
+              : summary?.revenueRangeTotal == null
+              ? "None"
+              : formatBaht(Number(summary.revenueRangeTotal))
           }
         />
         <KpiCard
           label="Orders"
           note={range.label}
-          value={loading ? "…" : summary?.ordersRangeTotal != null ? String(summary.ordersRangeTotal) : "None"}
+          value={
+            loading
+              ? "…"
+              : summary?.ordersRangeTotal == null
+              ? "None"
+              : String(Number(summary.ordersRangeTotal))
+          }
         />
         <KpiCard
           label="Average Order Value"
           note={range.label}
-          value={loading ? "…" : aov != null ? formatBaht(aov) : "None"}
+          value={
+            loading
+              ? "…"
+              : aov == null
+              ? "None"
+              : formatBaht(Number(aov))
+          }
         />
+        {/* Customers: คงเดิมตามที่ขอ */}
         <KpiCard
           label="Customers"
           note="All time"
-          value={loading ? "…" : summary?.customersTotal != null ? String(summary.customersTotal) : "None"}
+          value={
+            loading
+              ? "…"
+              : summary?.customersTotal != null
+              ? String(summary.customersTotal)
+              : "None"
+          }
         />
       </div>
 
@@ -281,7 +344,7 @@ export default function AdminDashboardPage() {
                     <div className="truncate text-sm font-medium text-gray-900">{p.name}</div>
                     <div className="text-xs text-gray-500">{(p.units ?? 0)} units</div>
                   </div>
-                  <div className="text-sm font-medium">
+                  <div className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
                     {formatBaht(Number(p.revenue ?? 0))}
                   </div>
                 </div>
@@ -297,7 +360,7 @@ export default function AdminDashboardPage() {
 
             {/* empty state */}
             {(!lowStock || lowStock.length === 0) ? (
-            <EmptyHint text="All stocks are healthy" />
+              <EmptyHint text="All stocks are healthy" />
             ) : (
               <ul className="mt-2 divide-y divide-gray-100">
                 {lowStock.map(i => (
@@ -340,7 +403,7 @@ function SectionHead({ title, subtitle }: { title: string; subtitle?: string }) 
   );
 }
 
-function EmptyHint({ text }: { text: string }) {
+function EmptyHint({ text }: { text: string; }) {
   return <div className="rounded-lg border border-dashed border-gray-200 p-4 text-center text-sm text-gray-500">{text}</div>;
 }
 
@@ -455,6 +518,65 @@ function barWidthPercent(value: number, arr?: CategoryBreakdown[] | null) {
   const max = Math.max(...arr.map((a) => a.value), 1);
   return Math.round((value / max) * 100);
 }
+
+/** แปลงผลลัพธ์ "ยอดขายรายวัน" จาก BE ให้เป็น DailyPoint[]
+ * รองรับคีย์หลายแบบ:  {date, revenue} | {date, total} | {_id, sum} | {day, value} | {key, total} ฯลฯ
+ */
+function normalizeRevenueDaily(raw: any, rangeKey: "today" | "7d" | "30d" | "ytd"): DailyPoint[] {
+  if (!raw) return [];
+
+  const arr: any[] = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : [];
+  if (!arr.length) return [];
+
+  const pickDate = (o: any) =>
+    o?.date ??
+    o?._id ??
+    o?.day ??
+    o?.key ??
+    (typeof o?.d === "string" ? o.d : undefined);
+
+  const pickValue = (o: any) =>
+    o?.revenue ?? o?.total ?? o?.sum ?? o?.value ?? 0;
+
+  // map เป็น DailyPoint (ถ้า date ไม่ใช่ ISO ให้พยายามแปลงเป็น YYYY-MM-DD)
+  const mapped: DailyPoint[] = arr
+    .map((o) => {
+      const dRaw = pickDate(o);
+      const vRaw = pickValue(o);
+
+      if (dRaw == null) return null;
+
+      let dIso: string;
+      try {
+        // กรณีได้ timestamp/Date หรือ string แปลก ๆ
+        const d = new Date(dRaw);
+        if (!isNaN(+d)) {
+          dIso = d.toISOString().slice(0, 10);
+        } else if (typeof dRaw === "string") {
+          // พยายาม normalize string (เช่น 2025/10/16 -> 2025-10-16)
+          dIso = dRaw.replace(/\//g, "-").slice(0, 10);
+        } else {
+          return null;
+        }
+      } catch {
+        return null;
+      }
+
+      const val = Number(vRaw ?? 0);
+      return { date: dIso, value: Number.isFinite(val) ? val : 0 };
+    })
+    .filter(Boolean) as DailyPoint[];
+
+  // เผื่อ BE ส่งมาไม่เรียง ให้เรียงตามวันที่
+  mapped.sort((a, b) => a.date.localeCompare(b.date));
+
+  // ถ้าเป็น today แต่ BE ส่งมาหลายจุด ให้เลือกเฉพาะจุดล่าสุด
+  if (rangeKey === "today" && mapped.length > 1) {
+    return [mapped[mapped.length - 1]];
+  }
+  return mapped;
+}
+
 
 /** สร้างข้อมูลปลอมสำหรับกราฟ เมื่อ BE ยังไม่พร้อม */
 function genFakeTrend(key: RangeKey): DailyPoint[] {
