@@ -1,4 +1,3 @@
-// src/app/(site)/orders/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -7,7 +6,7 @@ import Link from "next/link";
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 /* ======================== Types ======================== */
-type OrderStatus = "PENDING_PAYMENT" | "SLIP_UPLOADED" | "PAID" | "REJECTED" | "EXPIRED";
+type OrderStatus = "PENDING_PAYMENT" | "SLIP_UPLOADED" | "PAID" | "REJECTED" | "EXPIRED" | "CANCELED";
 type PaymentMethod = "PROMPTPAY" | "COD" | "CARD" | string;
 
 type OrderItem = {
@@ -29,6 +28,8 @@ type OrderRow = {
   total: number;
   paymentMethod: PaymentMethod;
   status: OrderStatus;
+  /** <<< ใหม่: เหตุผลจากฝั่งแอดมิน */
+  statusNote?: string | null;
   promptpayTarget?: string | null;
   promptpayQrUrl?: string | null;
   paymentSlipUrl?: string | null;
@@ -39,7 +40,7 @@ type OrderRow = {
 
 type OrderListResponse = {
   items: OrderRow[];
-  page: number;           // 0-based
+  page: number;
   size: number;
   totalElements: number;
   totalPages: number;
@@ -84,6 +85,8 @@ function statusBadge(s: OrderStatus) {
     case "REJECTED":
     case "EXPIRED":
       return `${base} bg-red-50 text-red-700 ring-1 ring-red-200`;
+    case "CANCELED":
+      return `${base} bg-gray-100 text-gray-700 ring-1 ring-gray-200`;
     default:
       return `${base} bg-gray-100 text-gray-700`;
   }
@@ -94,6 +97,7 @@ const statusTH: Record<OrderStatus, string> = {
   PAID: "ชำระแล้ว",
   REJECTED: "ถูกปฏิเสธ",
   EXPIRED: "หมดอายุ",
+  CANCELED: "ยกเลิก",
 };
 
 /* แท็บกรองสถานะ -> ส่งไปเป็น CSV */
@@ -102,13 +106,13 @@ const tabToStatuses: Record<TabKey, string | undefined> = {
   all: undefined,
   processing: "PENDING_PAYMENT,SLIP_UPLOADED",
   success: "PAID",
-  failed: "REJECTED,EXPIRED",
+  failed: "REJECTED,EXPIRED,CANCELED",
 };
 
 /* ======================== Page ======================== */
 export default function OrdersPage() {
   const [tab, setTab] = useState<TabKey>("all");
-  const [page, setPage] = useState(0);       // 0-based
+  const [page, setPage] = useState(0);
   const [size, setSize] = useState(20);
   const [rows, setRows] = useState<OrderRow[]>([]);
   const [totalElements, setTotalElements] = useState(0);
@@ -152,92 +156,134 @@ export default function OrdersPage() {
   };
 
   return (
-    <main className="max-w-5xl mx-auto px-4 md:px-6 py-8">
-      <h1 className="text-2xl md:text-3xl font-bold mb-4">Order history</h1>
+  <main className="mx-auto max-w-5xl px-4 md:px-6 py-8">
+    {/* Heading */}
+    <div className="mb-6 flex items-end justify-between gap-3">
+      <div>
+        <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-gray-900">
+          Order history
+        </h1>
+        <p className="text-sm text-gray-500">ประวัติการสั่งซื้อทั้งหมดของคุณ</p>
+      </div>
+    </div>
 
-      {/* Tabs */}
-      <div className="flex flex-wrap gap-2 mb-4">
-        {([
+    {/* Tabs */}
+    <div className="mb-5 inline-flex rounded-xl border bg-white p-1 shadow-sm">
+      {(
+        [
           ["all", "ทั้งหมด"],
           ["processing", "กำลังดำเนินการ"],
           ["success", "สำเร็จ"],
-          ["failed", "ไม่สำเร็จ"],
-        ] as [TabKey, string][]).map(([key, label]) => (
+          ["failed", "ไม่สำเร็จ/ยกเลิก"],
+        ] as [TabKey, string][]
+      ).map(([key, label]) => {
+        const active = tab === key;
+        return (
           <button
             key={key}
             onClick={() => changeTab(key)}
-            className={`px-3 py-1.5 rounded-full text-sm font-medium border ${
-              tab === key ? "bg-black text-white border-black" : "bg-white text-gray-700 hover:bg-gray-50"
-            }`}
+            className={[
+              "rounded-lg px-3 py-1.5 text-sm font-medium transition",
+              active
+                ? "bg-gray-900 text-white shadow-sm"
+                : "text-gray-700 hover:bg-gray-50",
+            ].join(" ")}
           >
             {label}
           </button>
-        ))}
+        );
+      })}
+    </div>
+
+    {/* Error */}
+    {err && (
+      <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        โหลดข้อมูลผิดพลาด: {err}
       </div>
+    )}
 
-      {err && (
-        <div className="mb-4 border border-red-200 bg-red-50 text-red-700 rounded-md px-3 py-2 text-sm">
-          โหลดข้อมูลผิดพลาด: {err}
-        </div>
-      )}
-
-      <div className="overflow-x-auto rounded-xl border">
-        <table className="min-w-full text-sm">
+    {/* Table */}
+    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+      <div className="overflow-x-auto">
+        <table className="min-w-[720px] w-full text-sm">
           <thead className="bg-gray-50 text-gray-600">
-            <tr>
-              <th className="text-left px-4 py-3 w-[140px]">รหัส</th>
-              <th className="text-left px-4 py-3 w-[160px]">วันที่</th>
-              <th className="text-left px-4 py-3">สถานะ</th>
-              <th className="text-right px-4 py-3 w-[120px]">ยอดสุทธิ</th>
-              <th className="text-left px-4 py-3 w-[140px]">การชำระ</th>
-              <th className="text-right px-4 py-3 w-[150px]">การจัดการ</th>
+            <tr className="*:[--pad:theme(spacing.3)] *:px-4 *:py-[var(--pad)]">
+              <th className="text-left w-[140px] font-semibold">รหัส</th>
+              <th className="text-left w-[180px] font-semibold">วันที่</th>
+              <th className="text-left font-semibold">สถานะ</th>
+              <th className="text-right w-[120px] font-semibold">ยอดสุทธิ</th>
+              <th className="text-left w-[140px] font-semibold">การชำระ</th>
+              <th className="text-right w-[150px] font-semibold">การจัดการ</th>
             </tr>
           </thead>
 
-          <tbody className="divide-y">
+          <tbody className="divide-y divide-gray-100">
             {loading ? (
-              // Skeleton rows
+              // skeleton rows
               Array.from({ length: 5 }).map((_, i) => (
-                <tr key={`sk-${i}`} className="animate-pulse">
-                  <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded w-24" /></td>
-                  <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded w-28" /></td>
-                  <td className="px-4 py-3"><div className="h-5 bg-gray-200 rounded w-20" /></td>
-                  <td className="px-4 py-3 text-right"><div className="h-4 bg-gray-200 rounded ml-auto w-16" /></td>
-                  <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded w-20" /></td>
-                  <td className="px-4 py-3 text-right"><div className="h-8 bg-gray-200 rounded w-28 ml-auto" /></td>
+                <tr key={`sk-${i}`} className="animate-pulse *:px-4 *:py-3">
+                  <td><div className="h-4 w-24 rounded bg-gray-200" /></td>
+                  <td><div className="h-4 w-28 rounded bg-gray-200" /></td>
+                  <td><div className="h-5 w-24 rounded bg-gray-200" /></td>
+                  <td className="text-right">
+                    <div className="ml-auto h-4 w-16 rounded bg-gray-200" />
+                  </td>
+                  <td><div className="h-4 w-20 rounded bg-gray-200" /></td>
+                  <td className="text-right">
+                    <div className="ml-auto h-8 w-28 rounded bg-gray-200" />
+                  </td>
                 </tr>
               ))
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-gray-500">
-                  ไม่มีรายการในหมวดนี้
+                <td colSpan={6} className="px-6 py-14 text-center">
+                  <div className="mx-auto mb-2 h-10 w-10 rounded-full bg-gray-100" />
+                  <p className="text-sm text-gray-500">ไม่มีรายการในหมวดนี้</p>
                 </td>
               </tr>
             ) : (
               rows.map((o) => (
-                <tr key={o.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 font-mono text-xs md:text-sm">{o.id.slice(-8)}</td>
-                  <td className="px-4 py-3">{fmtDate(o.createdAt)}</td>
-                  <td className="px-4 py-3">
-                    <span className={statusBadge(o.status)}>{statusTH[o.status]}</span>
+                <tr
+                  key={o.id}
+                  className="transition hover:bg-gray-50 *:px-4 *:py-3 align-top"
+                >
+                  <td className="font-mono text-xs md:text-sm text-gray-700">
+                    {o.id.slice(-8)}
                   </td>
-                  <td className="px-4 py-3 text-right font-medium">{THB(o.total)}</td>
-                  <td className="px-4 py-3">
-                    {o.paymentMethod === "PROMPTPAY" ? "PromptPay" : String(o.paymentMethod || "-")}
+                  <td className="text-gray-700">{fmtDate(o.createdAt)}</td>
+                  <td>
+                    <span
+                      className={[
+                        statusBadge(o.status),
+                        "inline-flex items-center gap-2",
+                      ].join(" ")}
+                    >
+                      <span className="inline-block h-2 w-2 rounded-full bg-current opacity-75" />
+                      {statusTH[o.status]}
+                    </span>
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="text-right font-medium text-gray-900">
+                    {THB(o.total)}
+                  </td>
+                  <td className="text-gray-700">
+                    {o.paymentMethod === "PROMPTPAY"
+                      ? "PromptPay"
+                      : String(o.paymentMethod || "-")}
+                  </td>
+                  <td className="text-right">
                     <div className="flex justify-end gap-2">
                       <Link
                         href={`/orders/${o.id}`}
-                        className="px-3 py-1.5 rounded-lg border text-gray-700 hover:bg-gray-50"
+                        className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-gray-700 shadow-sm transition hover:border-gray-300 hover:bg-gray-50"
                       >
                         รายละเอียด
                       </Link>
+
                       {o.status === "PENDING_PAYMENT" && (
                         <Link
                           href={`/checkout`}
-                          className="px-3 py-1.5 rounded-lg bg-black text-white hover:bg-gray-800"
                           title="ไปหน้าชำระเงินเพื่อแนบสลิป"
+                          className="rounded-lg bg-gray-900 px-3 py-1.5 text-white shadow-sm transition hover:bg-gray-800"
                         >
                           ชำระ / แนบสลิป
                         </Link>
@@ -250,32 +296,35 @@ export default function OrdersPage() {
           </tbody>
         </table>
       </div>
+    </div>
 
-      {/* Pagination */}
-      <div className="mt-4 flex items-center justify-between gap-4">
-        <div className="text-sm text-gray-600">
-          แสดง {(page * size) + (rows.length > 0 ? 1 : 0)}–{page * size + rows.length} จาก {totalElements} รายการ
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
-            disabled={page <= 0 || loading}
-            className="px-3 py-1.5 rounded-lg border disabled:opacity-50"
-          >
-            ก่อนหน้า
-          </button>
-          <span className="text-sm text-gray-600">
-            หน้า {page + 1} / {Math.max(1, totalPages)}
-          </span>
-          <button
-            onClick={() => setPage((p) => (p + 1 < totalPages ? p + 1 : p))}
-            disabled={page + 1 >= totalPages || loading}
-            className="px-3 py-1.5 rounded-lg border disabled:opacity-50"
-          >
-            ถัดไป
-          </button>
-        </div>
+    {/* Pagination */}
+    <div className="mt-5 flex items-center justify-between gap-4">
+      <div className="text-sm text-gray-600">
+        แสดง {(page * size) + (rows.length > 0 ? 1 : 0)}–{page * size + rows.length} จาก{" "}
+        {totalElements} รายการ
       </div>
-    </main>
-  );
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setPage((p) => Math.max(0, p - 1))}
+          disabled={page <= 0 || loading}
+          className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:opacity-50"
+        >
+          ก่อนหน้า
+        </button>
+        <span className="text-sm text-gray-600">
+          หน้า {page + 1} / {Math.max(1, totalPages)}
+        </span>
+        <button
+          onClick={() => setPage((p) => (p + 1 < totalPages ? p + 1 : p))}
+          disabled={page + 1 >= totalPages || loading}
+          className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:opacity-50"
+        >
+          ถัดไป
+        </button>
+      </div>
+    </div>
+  </main>
+);
+
 }
