@@ -43,7 +43,18 @@ type Page<T> = {
   size: number;
 };
 
-type UserLite = { id: string; fullName: string; email: string };
+type Address = {
+  fullName?: string | null;
+  phone?: string | null;
+  line1?: string | null;
+  line2?: string | null;
+  subDistrict?: string | null;  // ตำบล
+  district?: string | null;     // อำเภอ
+  province?: string | null;
+  postcode?: string | null;
+};
+
+type UserLite = { id: string; fullName: string; email: string; address?: Address | null; };
 
 /* ---------------- Utils ---------------- */
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8080";
@@ -165,53 +176,87 @@ export default function AdminOrdersPage() {
 
   /* ------------- fetch customers on-demand (cached) ------------- */
   async function fetchUser(userId: string): Promise<UserLite | null> {
-    try {
-      // ปรับ endpoint ให้ตรงกับของคุณ ถ้าไม่ใช่ /api/customers/{id}
-      const res = await fetch(`${API_BASE}/api/customers/${userId}`, {
-        headers,
-        cache: "no-store",
-      });
-      if (!res.ok) return null;
-      const u = await res.json();
-      const fullName =
-        u.fullName ??
-        (u.firstName && u.lastName ? `${u.firstName} ${u.lastName}` : u.name ?? userId);
-      return { id: userId, fullName, email: u.email ?? "" };
-    } catch {
-      return null;
-    }
-  }
+  try {
+    // ปรับ path ให้ตรงกับระบบจริง (admin หรือ public ก็ได้)
+    const res = await fetch(`${API_BASE}/api/customers/${userId}`, {
+      headers,
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const u = await res.json();
 
-  useEffect(() => {
-    const ids = Array.from(new Set(data.content.map((o) => o.userId))).filter(
+    const fullName =
+      u.fullName ??
+      (u.firstName && u.lastName ? `${u.firstName} ${u.lastName}` : u.name ?? userId);
+
+    // เดาคีย์ที่อาจเป็น "ที่อยู่เริ่มต้น"
+    const rawAddr =
+      u.defaultAddress ??
+      u.shippingAddress ??
+      u.address ??
+      (Array.isArray(u.addresses) ? u.addresses[0] : null) ??
+      (Array.isArray(u.shippingAddresses) ? u.shippingAddresses[0] : null);
+
+    const addr: Address | null = rawAddr
+      ? {
+          fullName: rawAddr.fullName ?? rawAddr.name ?? fullName ?? null,
+          phone: rawAddr.phone ?? rawAddr.tel ?? null,
+          line1: rawAddr.line1 ?? rawAddr.address1 ?? rawAddr.address ?? null,
+          line2: rawAddr.line2 ?? rawAddr.address2 ?? null,
+          subDistrict: rawAddr.subDistrict ?? rawAddr.ward ?? null,
+          district: rawAddr.district ?? rawAddr.city ?? null,
+          province: rawAddr.province ?? rawAddr.state ?? null,
+          postcode: rawAddr.postcode ?? rawAddr.zip ?? rawAddr.zipcode ?? null,
+        }
+      : null;
+
+    return { id: userId, fullName, email: u.email ?? "", address: addr };
+  } catch {
+    return null;
+  }
+}
+
+  
+  /* ------------- derived ------------- */
+
+// แปลง data -> rows (กัน undefined) รองรับหลายรูปทรง response (content | items | data)
+const rows = useMemo<Order[]>(() => {
+  const anyData = data as any;
+  if (Array.isArray(anyData?.content)) return anyData.content as Order[];
+  if (Array.isArray(anyData?.items))   return anyData.items as Order[];
+  if (Array.isArray(anyData?.data))    return anyData.data as Order[];
+  return [];
+}, [data]);
+
+useEffect(() => {
+    const ids = Array.from(new Set(rows.map((o) => o.userId))).filter(
       (id) => id && !userMap[id]
     );
     if (ids.length === 0) return;
     (async () => {
       const list = await Promise.all(ids.map((id) => fetchUser(id)));
       const patch: Record<string, UserLite> = {};
-      list.forEach((u) => {
-        if (u) patch[u.id] = u;
-      });
+      list.forEach((u) => { if (u) patch[u.id] = u; });
       if (Object.keys(patch).length) setUserMap((prev) => ({ ...prev, ...patch }));
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.content, headers]);
+  }, [rows, headers]);
 
-  /* ------------- derived ------------- */
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return data.content;
-    return data.content.filter(
-      (o) =>
-        o.id.toLowerCase().includes(q) || (o.userId ?? "").toLowerCase().includes(q)
-    );
-  }, [data.content, query]);
+// กรองด้วย query จาก rows (ไม่อิง data.content ตรงๆ แล้ว)
+const filtered = useMemo(() => {
+  const q = query.trim().toLowerCase();
+  if (!q) return rows;
+  return rows.filter(
+    (o) => o.id.toLowerCase().includes(q) || (o.userId ?? "").toLowerCase().includes(q)
+  );
+}, [rows, query]);
 
-  const kpiTotal = data.totalElements;
-  const kpiAwait = filtered.filter((o) => o.status === "SLIP_UPLOADED").length;
-  const kpiPaid = filtered.filter((o) => o.status === "PAID").length;
+
+  const kpiTotal    = (data?.totalElements ?? rows.length);
+  const kpiAwait    = filtered.filter((o) => o.status === "SLIP_UPLOADED").length;
+  const kpiPaid     = filtered.filter((o) => o.status === "PAID").length;
   const kpiRejected = filtered.filter((o) => o.status === "REJECTED").length;
+
 
   /* ------------- actions ------------- */
   async function patchStatus(
@@ -250,19 +295,26 @@ export default function AdminOrdersPage() {
   };
 
   async function onView(o: Order) {
-    try {
-      const res = await fetch(`${API_BASE}/api/admin/orders/${o.id}`, {
-        headers,
-        cache: "no-store",
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const full = (await res.json()) as Order;
-      setViewOrder(full);
-      setViewOpen(true);
-    } catch (e: any) {
-      alert(e.message || "โหลดรายละเอียดไม่สำเร็จ");
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/orders/${o.id}`, {
+      headers,
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const full = (await res.json()) as Order;
+    setViewOrder(full);
+
+    // ✅ ensure customer loaded (for address)
+    if (!userMap[o.userId]) {
+      const u = await fetchUser(o.userId);
+      if (u) setUserMap((prev) => ({ ...prev, [u.id]: u }));
     }
+
+    setViewOpen(true);
+  } catch (e: any) {
+    alert(e.message || "โหลดรายละเอียดไม่สำเร็จ");
   }
+}
 
   function onCancel(o: Order) {
     const reason = prompt(
@@ -548,7 +600,7 @@ export default function AdminOrdersPage() {
       {/* Footer */}
       <div className="flex flex-col gap-3 text-sm text-gray-600 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          Showing {data.content.length} of {data.totalElements} orders • หน้า{" "}
+          Showing {rows.length} of {data.totalElements ?? rows.length} orders • หน้า{" "}
           {data.number + 1}/{data.totalPages || 1}
         </div>
         <div className="flex gap-2">
@@ -600,6 +652,7 @@ export default function AdminOrdersPage() {
                 <div className="text-xs text-gray-500">
                   {userMap[viewOrder.userId]?.email || ""}
                 </div>
+                
               </div>
 
               <div>
@@ -678,6 +731,22 @@ export default function AdminOrdersPage() {
 }
 
 /* ---------------- Small UI bits ---------------- */
+
+function formatAddress(a?: Address | null) {
+  if (!a) return "";
+  const parts = [
+    a.line1,
+    a.line2,
+    a.subDistrict && `ต.${a.subDistrict}`,
+    a.district && `อ.${a.district}`,
+    a.province && `จ.${a.province}`,
+    a.postcode,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return parts;
+}
+
 
 function Header() {
   return (

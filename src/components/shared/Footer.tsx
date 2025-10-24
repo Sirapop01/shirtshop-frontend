@@ -1,10 +1,11 @@
 import Image from "next/image";
 import Link from "next/link";
+import clsx from "clsx";
 import { FaFacebook, FaInstagram, FaTwitter } from "react-icons/fa";
 
-export default function Footer() {
+export default function Footer({ className }: { className?: string }) {
   return (
-    <footer className="w-full bg-zinc-50 border-t border-zinc-200">
+    <footer className={clsx("w-full bg-zinc-50 border-t border-zinc-200", className)}>
       <div className="mx-auto max-w-6xl px-4 py-8">
         <div className="flex flex-col md:flex-row justify-between items-center gap-8">
 
