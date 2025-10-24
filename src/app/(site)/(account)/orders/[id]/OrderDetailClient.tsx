@@ -1,11 +1,12 @@
-// src/app/(site)/orders/OrderDetailClient.tsx
+// src/app/(site)/orders/[id]/OrderDetailClient.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import StatusBadge, { OrderStatus } from "@/components/orders/StatusBadge";
-import { useCart } from "@/context/CartContext";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import StatusBadge, { OrderStatus } from "@/components/orders/StatusBadge";
+import { useCart } from "@/context/CartContext";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 const ACCESS_TOKEN_KEY = "accessToken";
@@ -20,7 +21,7 @@ async function authFetch(url: string, init?: RequestInit) {
   const t = getAccessToken();
   if (t) h.set("Authorization", `Bearer ${t}`);
   h.set("Accept", "application/json");
-  return fetch(url, { ...init, headers: h, cache: "no-store" });
+  return fetch(url, { ...init, headers: h, credentials: "include", cache: "no-store" });
 }
 
 type OrderItem = {
@@ -43,16 +44,19 @@ type OrderDetail = {
   paymentMethod: "PROMPTPAY" | "CARD" | string;
   status: OrderStatus | "CANCELED";
   promptpayTarget?: string | null;
-  promptpayQrUrl?: string | null; // data URL จาก BE
+  promptpayQrUrl?: string | null; // data URL
   expiresAt?: string | null;
   paymentSlipUrl?: string | null;
   createdAt: string;
   updatedAt: string;
 
-  // 🔽 เพิ่มฟิลด์สำหรับเหตุผล/เวลา
   statusNote?: string | null;
   rejectedAt?: string | null;
   canceledAt?: string | null;
+
+  // tracking (แสดงเฉพาะตอน PAID)
+  trackingTag?: string | null;
+  trackingCreatedAt?: string | null;
 };
 
 export default function OrderDetailClient({ orderId }: { orderId: string }) {
@@ -68,7 +72,7 @@ export default function OrderDetailClient({ orderId }: { orderId: string }) {
   const { refresh: refreshCart } = useCart();
   const router = useRouter();
 
-  // โหลดรายละเอียดครั้งแรก + โพลทุก 5s
+  // โหลดรายละเอียด + โพลทุก 5s
   useEffect(() => {
     let stop = false;
     async function load() {
@@ -98,10 +102,7 @@ export default function OrderDetailClient({ orderId }: { orderId: string }) {
     let iv: any;
     if (order?.expiresAt) {
       iv = setInterval(() => {
-        const diff = Math.max(
-          0,
-          Math.floor((+new Date(order.expiresAt!) - Date.now()) / 1000)
-        );
+        const diff = Math.max(0, Math.floor((+new Date(order.expiresAt!) - Date.now()) / 1000));
         setTimeLeft(diff);
       }, 500);
     } else {
@@ -110,7 +111,6 @@ export default function OrderDetailClient({ orderId }: { orderId: string }) {
     return () => iv && clearInterval(iv);
   }, [order?.expiresAt]);
 
-  // เงื่อนไข UI
   const canUploadSlip = useMemo(() => {
     if (!order) return false;
     if (!order.expiresAt || timeLeft <= 0) return false;
@@ -122,7 +122,6 @@ export default function OrderDetailClient({ orderId }: { orderId: string }) {
     return order.status === "EXPIRED" || order.status === "REJECTED";
   }, [order]);
 
-  // อัปโหลดสลิป
   function onSlipChange(e: React.ChangeEvent<HTMLInputElement>) {
     setSlipError(null);
     const f = e.target.files?.[0];
@@ -145,9 +144,7 @@ export default function OrderDetailClient({ orderId }: { orderId: string }) {
   async function submitSlip(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!order || !canUploadSlip) return;
-    const file = (
-      e.currentTarget.elements.namedItem("slip") as HTMLInputElement
-    )?.files?.[0];
+    const file = (e.currentTarget.elements.namedItem("slip") as HTMLInputElement)?.files?.[0];
     if (!file) {
       setSlipError("กรุณาเลือกไฟล์สลิป");
       return;
@@ -157,16 +154,12 @@ export default function OrderDetailClient({ orderId }: { orderId: string }) {
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const r = await authFetch(`${API}/api/orders/${order.id}/slip`, {
-        method: "POST",
-        body: fd,
-      });
+      const r = await authFetch(`${API}/api/orders/${order.id}/slip`, { method: "POST", body: fd });
       if (!r.ok) {
         setSlipError(await r.text());
         return;
       }
       const data = (await r.json()) as OrderDetail;
-      // รับ status/paymentSlipUrl ที่อัปเดตกลับมา
       setOrder((prev) =>
         prev
           ? {
@@ -177,20 +170,16 @@ export default function OrderDetailClient({ orderId }: { orderId: string }) {
             }
           : data
       );
-      setPoll(false); // หยุดโพลหลังส่งสลิป (แล้วแต่ดีไซน์)
+      setPoll(false);
       alert("อัปโหลดสลิปเรียบร้อย รอแอดมินยืนยัน");
     } finally {
       setUploading(false);
     }
   }
 
-  // กู้คืนเข้าตะกร้า
   async function restoreToCart() {
     if (!order || !canRestore) return;
-    const r = await authFetch(
-      `${API}/api/orders/${order.id}/restore-cart`,
-      { method: "POST" }
-    );
+    const r = await authFetch(`${API}/api/orders/${order.id}/restore-cart`, { method: "POST" });
     if (!r.ok) {
       alert(await r.text());
       return;
@@ -200,28 +189,19 @@ export default function OrderDetailClient({ orderId }: { orderId: string }) {
   }
 
   const THB = (n: number) =>
-    new Intl.NumberFormat("th-TH", {
-      style: "currency",
-      currency: "THB",
-      maximumFractionDigits: 0,
-    }).format(n);
+    new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", maximumFractionDigits: 0 }).format(n);
 
   const fmtDateTime = (s?: string | null) => {
     if (!s) return "";
     try {
-      return new Date(s).toLocaleString("th-TH", {
-        dateStyle: "medium",
-        timeStyle: "short",
-      });
+      return new Date(s).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" });
     } catch {
       return s ?? "";
     }
   };
 
   if (loading) {
-    return (
-      <main className="mx-auto max-w-4xl px-4 md:px-6 py-8">กำลังโหลด...</main>
-    );
+    return <main className="mx-auto max-w-4xl px-4 md:px-6 py-8">กำลังโหลด...</main>;
   }
   if (!order) {
     return (
@@ -231,14 +211,33 @@ export default function OrderDetailClient({ orderId }: { orderId: string }) {
     );
   }
 
+  // ✅ แสดงเลขติดตามเฉพาะเมื่อสถานะเป็น PAID เท่านั้น
+  const showTracking = order.status === "PAID" && !!order.trackingTag;
+
   return (
     <main className="mx-auto max-w-4xl px-4 md:px-6 py-8 space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl md:text-3xl font-bold">
-          Order #{order.id.slice(-8)}
-        </h1>
+        <h1 className="text-2xl md:text-3xl font-bold">Order #{order.id.slice(-8)}</h1>
         <StatusBadge s={order.status as OrderStatus} />
       </div>
+
+      {/* การจัดส่ง */}
+      <section id="shipping" className="rounded-xl border p-4">
+        <h2 className="font-semibold mb-2">การจัดส่ง</h2>
+        {showTracking ? (
+          <div className="space-y-1">
+            <div className="text-sm text-gray-600">เลขติดตาม</div>
+            <div className="font-mono">{order.trackingTag}</div>
+            {order.trackingCreatedAt && (
+              <div className="text-xs text-gray-500">
+                สร้างเลขติดตามเมื่อ {fmtDateTime(order.trackingCreatedAt)}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="text-sm text-gray-500">ยังไม่มีเลขติดตาม</div>
+        )}
+      </section>
 
       {/* รายการสินค้า */}
       <section className="rounded-xl border p-4">
@@ -263,34 +262,24 @@ export default function OrderDetailClient({ orderId }: { orderId: string }) {
                   {it.color} / {it.size} × {it.quantity}
                 </div>
               </div>
-              <div className="text-sm">
-                {THB(it.unitPrice * it.quantity)}
-              </div>
+              <div className="text-sm">{THB(it.unitPrice * it.quantity)}</div>
             </li>
           ))}
         </ul>
         <div className="mt-3 text-sm text-gray-700 space-y-1">
-          <div>
-            สินค้า: <b>{THB(order.subTotal)}</b>
-          </div>
-          <div>
-            ค่าส่ง: <b>{THB(order.shippingFee)}</b>
-          </div>
-          <div className="font-semibold">
-            ยอดรวม: <b>{THB(order.total)}</b>
-          </div>
+          <div>สินค้า: <b>{THB(order.subTotal)}</b></div>
+          <div>ค่าส่ง: <b>{THB(order.shippingFee)}</b></div>
+          <div className="font-semibold">ยอดรวม: <b>{THB(order.total)}</b></div>
         </div>
       </section>
 
       {/* PromptPay QR + countdown (ถ้ามี) */}
       {order.promptpayQrUrl &&
-        (order.status === "PENDING_PAYMENT" ||
-          order.status === "SLIP_UPLOADED") && (
+        (order.status === "PENDING_PAYMENT" || order.status === "SLIP_UPLOADED") && (
           <section className="rounded-xl border p-4 space-y-4">
             <h2 className="font-semibold">Scan to pay (PromptPay)</h2>
             <div className="flex items-start gap-6">
               <div className="border rounded-lg p-2">
-                {/* ใช้ <img> รองรับ data URL ได้ชัวร์ */}
                 <img
                   src={order.promptpayQrUrl}
                   alt="PromptPay QR"
@@ -300,29 +289,20 @@ export default function OrderDetailClient({ orderId }: { orderId: string }) {
                 />
               </div>
               <div className="text-sm">
-                <div>
-                  PromptPay: <span className="font-mono">{order.promptpayTarget}</span>
-                </div>
-                <div>
-                  ยอดชำระ: <b>{THB(order.total)}</b>
-                </div>
+                <div>PromptPay: <span className="font-mono">{order.promptpayTarget}</span></div>
+                <div>ยอดชำระ: <b>{THB(order.total)}</b></div>
                 {order.expiresAt && (
                   <div className={`${timeLeft < 60 ? "text-red-600" : ""} mt-2`}>
                     หมดอายุภายใน:{" "}
                     <b>
-                      {Math.floor(timeLeft / 60)}:
-                      {String(timeLeft % 60).padStart(2, "0")} นาที
+                      {Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, "0")} นาที
                     </b>
                   </div>
                 )}
                 {order.paymentSlipUrl && (
                   <div className="mt-2">
                     สลิป:{" "}
-                    <a
-                      href={order.paymentSlipUrl}
-                      target="_blank"
-                      className="text-blue-600 hover:underline"
-                    >
+                    <a href={order.paymentSlipUrl} target="_blank" className="text-blue-600 hover:underline">
                       เปิดดู
                     </a>
                   </div>
@@ -350,39 +330,30 @@ export default function OrderDetailClient({ orderId }: { orderId: string }) {
           </div>
         )}
 
-        {/* 🔽 กล่องเหตุผล (REJECTED/CANCELED) */}
         {order.status === "REJECTED" && (
           <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2">
-            <div className="text-sm font-semibold text-red-700">
-              ออเดอร์ถูกปฏิเสธ
-            </div>
+            <div className="text-sm font-semibold text-red-700">ออเดอร์ถูกปฏิเสธ</div>
             {order.statusNote && (
               <p className="mt-1 text-sm text-red-700">
                 เหตุผลจากร้าน: <span className="font-medium">{order.statusNote}</span>
               </p>
             )}
             {order.rejectedAt && (
-              <p className="mt-1 text-xs text-red-700/80">
-                เวลา: {fmtDateTime(order.rejectedAt)}
-              </p>
+              <p className="mt-1 text-xs text-red-700/80">เวลา: {fmtDateTime(order.rejectedAt)}</p>
             )}
           </div>
         )}
 
         {order.status === "CANCELED" && (
           <div className="rounded-md border border-orange-200 bg-orange-50 px-3 py-2">
-            <div className="text-sm font-semibold text-orange-700">
-              ออเดอร์ถูกยกเลิก
-            </div>
+            <div className="text-sm font-semibold text-orange-700">ออเดอร์ถูกยกเลิก</div>
             {order.statusNote && (
               <p className="mt-1 text-sm text-orange-700">
                 เหตุผลจากร้าน: <span className="font-medium">{order.statusNote}</span>
               </p>
             )}
             {order.canceledAt && (
-              <p className="mt-1 text-xs text-orange-700/80">
-                เวลา: {fmtDateTime(order.canceledAt)}
-              </p>
+              <p className="mt-1 text-xs text-orange-700/80">เวลา: {fmtDateTime(order.canceledAt)}</p>
             )}
           </div>
         )}
@@ -395,11 +366,7 @@ export default function OrderDetailClient({ orderId }: { orderId: string }) {
       </section>
 
       {/* ฟอร์มอัปโหลดสลิป */}
-      <section
-        className={`${
-          !canUploadSlip ? "opacity-60 pointer-events-none" : ""
-        } rounded-xl border p-4`}
-      >
+      <section className={`${!canUploadSlip ? "opacity-60 pointer-events-none" : ""} rounded-xl border p-4`}>
         <h2 className="font-semibold mb-2">อัปโหลดสลิปโอนเงิน</h2>
         <form onSubmit={submitSlip} className="space-y-3">
           <div>
@@ -416,21 +383,11 @@ export default function OrderDetailClient({ orderId }: { orderId: string }) {
             />
             {slipPreview && (
               <div className="mt-2">
-                <Image
-                  src={slipPreview}
-                  alt="Preview"
-                  width={220}
-                  height={220}
-                  className="rounded-md"
-                />
+                <Image src={slipPreview} alt="Preview" width={220} height={220} className="rounded-md" />
               </div>
             )}
-            <p className="text-xs text-gray-500 mt-1">
-              รองรับ PNG/JPG/WebP ขนาดไม่เกิน 5MB
-            </p>
-            {slipError && (
-              <p className="text-xs text-red-600 mt-1">{slipError}</p>
-            )}
+            <p className="text-xs text-gray-500 mt-1">รองรับ PNG/JPG/WebP ขนาดไม่เกิน 5MB</p>
+            {slipError && <p className="text-xs text-red-600 mt-1">{slipError}</p>}
           </div>
           <button
             type="submit"
@@ -442,17 +399,23 @@ export default function OrderDetailClient({ orderId }: { orderId: string }) {
         </form>
       </section>
 
-      {/* ปุ่มกู้คืนตะกร้า (กรณีล้มเหลว/หมดอายุ) */}
+      {/* ปุ่มกู้คืนตะกร้า */}
       {canRestore && (
         <section className="rounded-xl border p-4">
           <button
             onClick={restoreToCart}
-            className="px-6 py-3 rounded-lg bg-white border font-semibold hover:bg-gray-50"
+            className="px-6 py-3 rounded-lg border font-semibold hover:bg-gray-50"
           >
             กู้คืนสินค้ากลับเข้าตะกร้า
           </button>
         </section>
       )}
+
+      <div>
+        <Link href="/orders" className="text-sm text-blue-600 hover:underline">
+          ← กลับไปหน้ารายการสั่งซื้อ
+        </Link>
+      </div>
     </main>
   );
 }

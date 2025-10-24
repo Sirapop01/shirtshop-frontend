@@ -31,12 +31,12 @@ export default function RootLayout({
     // 🔽 --- แก้ไขบรรทัดนี้บรรทัดเดียว --- 🔽
     <html lang="en" suppressHydrationWarning={true}>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen flex flex-col`}
       >
         <AuthProvider>
           <Navbar />
-          <main>{children}</main>
-          <Footer />
+          <main className="flex-1">{children}</main>
+          <Footer className="mt-auto" /> {/* ✅ เพิ่ม className เพื่อให้ชิดล่าง */}
         </AuthProvider>
       </body>
     </html>
