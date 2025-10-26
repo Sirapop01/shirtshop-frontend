@@ -25,7 +25,7 @@ const REFRESH_TOKEN_SS_KEY = "refreshToken"; // session
 export interface UserResponse {
   id: string;
   email: string;
-  username?: string;      
+  username?: string;
   firstName?: string;
   lastName?: string;
   displayName?: string;
@@ -34,7 +34,6 @@ export interface UserResponse {
   emailVerified?: boolean;
   roles?: string[];
 }
-
 
 interface DecodedToken {
   sub?: string;
@@ -47,12 +46,13 @@ interface DecodedToken {
 interface AuthContextType {
   user: UserResponse | null;
   token: string | null;
+  // เปลี่ยนให้คืน Promise<void> เพื่อให้ผู้เรียก await ได้ (กันต้องกด 2 ครั้ง)
   login: (
-    accessToken: string,
-    refreshToken: string | null,
-    userResponse: UserResponse,
-    remember: boolean
-  ) => void;
+      accessToken: string,
+      refreshToken: string | null,
+      userResponse: UserResponse,
+      remember: boolean
+  ) => Promise<void>;
   logout: () => void;
   isAdmin: boolean;
   authLoading: boolean;
@@ -66,15 +66,15 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 function extractRoles(input: unknown): string[] {
   if (!input) return [];
   const raw = Array.isArray(input)
-    ? input
-    : typeof input === "string"
-      ? input.split(/\s+/)
-      : [];
+      ? input
+      : typeof input === "string"
+          ? input.split(/\s+/)
+          : [];
   return raw
-    .map((r) => String(r).trim())
-    .filter(Boolean)
-    .map((r) => r.toUpperCase())
-    .map((r) => r.replace(/^ROLE_/, ""));
+      .map((r) => String(r).trim())
+      .filter(Boolean)
+      .map((r) => r.toUpperCase())
+      .map((r) => r.replace(/^ROLE_/, ""));
 }
 
 function isAdminFromClaims(decoded: DecodedToken | any): boolean {
@@ -83,7 +83,9 @@ function isAdminFromClaims(decoded: DecodedToken | any): boolean {
 }
 
 function isAdminFromUser(userLike: any): boolean {
-  const roles = extractRoles(userLike?.roles ?? userLike?.authorities ?? userLike?.permissions);
+  const roles = extractRoles(
+      userLike?.roles ?? userLike?.authorities ?? userLike?.permissions
+  );
   return roles.includes("ADMIN");
 }
 
@@ -94,63 +96,75 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [authLoading, setAuthLoading] = useState(true);
   const router = useRouter();
+
   /** ---------- logout ---------- */
-  const logout = useCallback(() => {
-    console.warn("[AUTH] LOGOUT called");
+  const logout = useCallback(async () => {
     try {
       localStorage.removeItem(ACCESS_TOKEN_KEY);
       sessionStorage.removeItem(ACCESS_TOKEN_KEY);
       localStorage.removeItem(REFRESH_TOKEN_LS_KEY);
       sessionStorage.removeItem(REFRESH_TOKEN_SS_KEY);
-    } catch { }
+    } catch {}
+
     setUser(null);
     setToken(null);
     setIsAdmin(false);
+
+    // รอให้ state commit รอบนี้ก่อน
+    await Promise.resolve();
+
     router.replace("/");
-  }, []);
+    router.refresh();
+  }, [router]);
 
-  /** ---------- login ---------- */
-  const login = useCallback((
-    accessToken: string,
-    refreshToken: string | null,
-    userResponse: UserResponse,
-    remember: boolean
-  ): void => {
-    // เคลียร์ของเก่า
-    try {
-      localStorage.removeItem(ACCESS_TOKEN_KEY);
-      sessionStorage.removeItem(ACCESS_TOKEN_KEY);
-      localStorage.removeItem(REFRESH_TOKEN_LS_KEY);
-      sessionStorage.removeItem(REFRESH_TOKEN_SS_KEY);
-    } catch { }
 
-    // เก็บ access token ตาม remember
-    if (remember) {
-      localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
-    } else {
-      sessionStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
-    }
+  /** ---------- login (async) ---------- */
+  const login = useCallback(
+      async (
+          accessToken: string,
+          refreshToken: string | null,
+          userResponse: UserResponse,
+          remember: boolean
+      ): Promise<void> => {
+        // 1) เคลียร์ของเก่า
+        try {
+          localStorage.removeItem(ACCESS_TOKEN_KEY);
+          sessionStorage.removeItem(ACCESS_TOKEN_KEY);
+          localStorage.removeItem(REFRESH_TOKEN_LS_KEY);
+          sessionStorage.removeItem(REFRESH_TOKEN_SS_KEY);
+        } catch {}
 
-    // เก็บ refresh token
-    if (refreshToken) {
-      if (remember) {
-        localStorage.setItem(REFRESH_TOKEN_LS_KEY, refreshToken);
-      } else {
-        sessionStorage.setItem(REFRESH_TOKEN_SS_KEY, refreshToken);
-      }
-    }
+        // 2) เก็บ access token ตาม remember
+        if (remember) {
+          localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+        } else {
+          sessionStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+        }
 
-    // set state
-    setToken(accessToken);
-    setUser(userResponse);
+        // 3) เก็บ refresh token
+        if (refreshToken) {
+          if (remember) {
+            localStorage.setItem(REFRESH_TOKEN_LS_KEY, refreshToken);
+          } else {
+            sessionStorage.setItem(REFRESH_TOKEN_SS_KEY, refreshToken);
+          }
+        }
 
-    try {
-      const decoded = jwtDecode<DecodedToken>(accessToken);
-      setIsAdmin(isAdminFromClaims(decoded) || isAdminFromUser(userResponse));
-    } catch {
-      setIsAdmin(isAdminFromUser(userResponse));
-    }
-  }, []);
+        // 4) อัปเดต state ให้เสร็จก่อน
+        setToken(accessToken);
+        setUser(userResponse);
+        try {
+          const decoded = jwtDecode<DecodedToken>(accessToken);
+          setIsAdmin(isAdminFromClaims(decoded) || isAdminFromUser(userResponse));
+        } catch {
+          setIsAdmin(isAdminFromUser(userResponse));
+        }
+
+        // 5) ปล่อยให้ React commit state ในรอบนี้ให้เสร็จ (กัน race)
+        await Promise.resolve();
+      },
+      []
+  );
 
   /** ---------- refreshMe ---------- */
   const refreshMe = useCallback(async () => {
@@ -172,8 +186,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   /** ---------- refresh token ---------- */
   const handleTokenRefresh = useCallback(async () => {
     const rt =
-      localStorage.getItem(REFRESH_TOKEN_LS_KEY) ||
-      sessionStorage.getItem(REFRESH_TOKEN_SS_KEY);
+        localStorage.getItem(REFRESH_TOKEN_LS_KEY) ||
+        sessionStorage.getItem(REFRESH_TOKEN_SS_KEY);
     if (!rt) {
       logout();
       return;
@@ -181,7 +195,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { data } = await api.post("/api/auth/refresh", { refreshToken: rt });
       const remembered = !!localStorage.getItem(REFRESH_TOKEN_LS_KEY);
-      login(data.accessToken, data.refreshToken, data.user, remembered);
+      // รอให้ login จบก่อนเพื่อกัน race
+      await login(data.accessToken, data.refreshToken, data.user, remembered);
     } catch (error: any) {
       console.error("Refresh failed:", error?.response?.status, error?.message);
       logout();
@@ -197,8 +212,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const initializeAuth = async () => {
       try {
         let storedToken: string | null =
-          sessionStorage.getItem(ACCESS_TOKEN_KEY) ||
-          localStorage.getItem(ACCESS_TOKEN_KEY);
+            sessionStorage.getItem(ACCESS_TOKEN_KEY) ||
+            localStorage.getItem(ACCESS_TOKEN_KEY);
 
         if (!storedToken) {
           setAuthLoading(false);
@@ -245,11 +260,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [handleTokenRefresh]);
 
   return (
-    <AuthContext.Provider
-      value={{ user, token, login, logout, isAdmin, authLoading, refreshMe }}
-    >
-      {children}
-    </AuthContext.Provider>
+      <AuthContext.Provider
+          value={{ user, token, login, logout, isAdmin, authLoading, refreshMe }}
+      >
+        {children}
+      </AuthContext.Provider>
   );
 }
 

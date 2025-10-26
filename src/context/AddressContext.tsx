@@ -1,4 +1,4 @@
-//AddressContext.tsx
+// src/context/AddressContext.tsx
 "use client";
 
 import {
@@ -10,6 +10,7 @@ import {
   useState,
   ReactNode,
 } from "react";
+import api, { getAccessToken } from "@/lib/api";
 
 /* ----------------- Types ----------------- */
 export interface Address {
@@ -33,40 +34,15 @@ interface AddressContextType {
   addAddress: (a: AddressPayload) => Promise<Address>;
   updateAddress: (id: string, a: AddressPayload) => Promise<Address>;
   removeAddress: (id: string) => Promise<void>;
-  setDefault: (id: string) => Promise<void>; // ✅ เพิ่ม
+  setDefault: (id: string) => Promise<void>;
 }
 
 const AddressContext = createContext<AddressContextType | undefined>(undefined);
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 /* ----------------- helpers ----------------- */
-const ACCESS_TOKEN_KEY = "accessToken";
-const getToken = () =>
-  (typeof window === "undefined"
-    ? null
-    : sessionStorage.getItem(ACCESS_TOKEN_KEY) || localStorage.getItem(ACCESS_TOKEN_KEY));
-
-function authHeader() {
-  const t = getToken();
-  return t ? `Bearer ${t}` : "";
-}
-
-async function authFetch(url: string, init?: RequestInit, timeoutMs = 15000) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-
-  const headers = new Headers(init?.headers || {});
-  headers.set("Accept", "application/json");
-  if (init?.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-
-  const ah = authHeader();
-  if (ah) headers.set("Authorization", ah);
-
-  try {
-    return await fetch(url, { ...init, headers, cache: "no-store", signal: ctrl.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+function authHeaders() {
+  const t = getAccessToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
 /** FE -> BE payload */
@@ -104,22 +80,28 @@ export function AddressProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(true);
-  const apiBase = useMemo(() => `${API}/api/addresses`, []);
+
+  // base path ภายใต้ BE — ให้กำหนดโดเมนผ่าน NEXT_PUBLIC_API_BASE ในไฟล์เดียว (lib/api.ts)
+  const basePath = useMemo(() => `/api/addresses`, []);
 
   useEffect(() => {
     mounted.current = true;
     refresh();
-    return () => { mounted.current = false; };
+    return () => {
+      mounted.current = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const refresh = async () => {
-    if (!getToken()) { setAddresses([]); return; }
-    setLoading(true); setError(null);
+    if (!getAccessToken()) {
+      setAddresses([]);
+      return;
+    }
+    setLoading(true);
+    setError(null);
     try {
-      const res = await authFetch(apiBase, { method: "GET" });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
+      const { data } = await api.get(basePath, { headers: authHeaders() });
       const mapped = Array.isArray(data) ? data.map(fromBackend) : [];
       if (mounted.current) setAddresses(mapped);
     } catch (e: any) {
@@ -131,42 +113,44 @@ export function AddressProvider({ children }: { children: ReactNode }) {
   };
 
   const addAddress = async (a: AddressPayload) => {
-    const res = await authFetch(apiBase, { method: "POST", body: JSON.stringify(toPayload(a)) });
-    if (!res.ok) throw new Error((await res.text()) || "Create address failed");
-    const created = fromBackend(await res.json());
+    const { data } = await api.post(basePath, toPayload(a), {
+      headers: authHeaders(),
+    });
+    const created = fromBackend(data);
     await refresh();
     return created;
   };
 
   const updateAddress = async (id: string, a: AddressPayload) => {
     if (!id) throw new Error("Missing address id");
-    const res = await authFetch(`${apiBase}/${id}`, { method: "PUT", body: JSON.stringify(toPayload(a)) });
-    if (!res.ok) throw new Error((await res.text()) || "Update address failed");
-    const updated = fromBackend(await res.json());
+    const { data } = await api.put(`${basePath}/${id}`, toPayload(a), {
+      headers: authHeaders(),
+    });
+    const updated = fromBackend(data);
     await refresh();
     return updated;
   };
 
   const removeAddress = async (id: string) => {
     if (!id) throw new Error("Missing address id");
-    const res = await authFetch(`${apiBase}/${id}`, { method: "DELETE" });
-    if (!res.ok) throw new Error((await res.text()) || "Delete address failed");
+    await api.delete(`${basePath}/${id}`, { headers: authHeaders() });
     await refresh();
   };
 
   const setDefault = async (id: string) => {
     if (!id) throw new Error("Missing address id");
-    const res = await authFetch(`${apiBase}/${id}/default`, { method: "PUT" });
-    if (!res.ok) throw new Error((await res.text()) || "Set default failed");
+    await api.put(`${basePath}/${id}/default`, undefined, {
+      headers: authHeaders(),
+    });
     await refresh();
   };
 
   return (
-    <AddressContext.Provider
-      value={{ addresses, loading, error, refresh, addAddress, updateAddress, removeAddress, setDefault }}
-    >
-      {children}
-    </AddressContext.Provider>
+      <AddressContext.Provider
+          value={{ addresses, loading, error, refresh, addAddress, updateAddress, removeAddress, setDefault }}
+      >
+        {children}
+      </AddressContext.Provider>
   );
 }
 

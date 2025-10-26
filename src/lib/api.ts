@@ -1,106 +1,84 @@
-// api.ts
+// src/lib/api.ts
 
-import axios, { AxiosError } from "axios";
 
-// สมมติว่าคุณมี state management (Zustand, Redux, or Context)
-// ที่สามารถเข้าถึงได้จากภายนอก Component
-import { useAuthStore } from "@/store/auth";
+import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 
-// --- Helper Functions (คุณอาจจะต้องสร้างไฟล์นี้แยก) ---
-// ฟังก์ชันสำหรับอ่าน/เขียน token จาก storage โดยตรง
-const getRefreshToken = (): string | null => {
-  return localStorage.getItem("refreshToken") || sessionStorage.getItem("refreshToken");
+// ---- Base URL (trim trailing slashes to avoid double //) ----
+const RAW_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
+export const API_BASE = RAW_BASE.replace(/\/+$/, "");
+
+// ---- Token keys & helpers ----
+const ACCESS_TOKEN_KEY = "accessToken";
+const REFRESH_TOKEN_KEY = "refreshToken";
+
+export const getAccessToken = (): string | null => {
+  if (typeof window === "undefined") return null;
+  return (
+      sessionStorage.getItem(ACCESS_TOKEN_KEY) ??
+      localStorage.getItem(ACCESS_TOKEN_KEY)
+  );
 };
 
-const getAccessToken = (): string | null => {
-  return localStorage.getItem("accessToken") || sessionStorage.getItem("accessToken");
+export const setAccessToken = (
+    token: string,
+    persist: "session" | "local" = "session"
+) => {
+  if (typeof window === "undefined") return;
+  sessionStorage.removeItem(ACCESS_TOKEN_KEY);
+  localStorage.removeItem(ACCESS_TOKEN_KEY);
+  if (persist === "local") localStorage.setItem(ACCESS_TOKEN_KEY, token);
+  else sessionStorage.setItem(ACCESS_TOKEN_KEY, token);
 };
 
-const saveTokens = (accessToken: string, refreshToken?: string | null) => {
-  const isRemembered = !!localStorage.getItem("refreshToken");
-  if (isRemembered) {
-    localStorage.setItem("accessToken", accessToken);
-    if (refreshToken) localStorage.setItem("refreshToken", refreshToken);
-  } else {
-    sessionStorage.setItem("accessToken", accessToken);
-    if (refreshToken) sessionStorage.setItem("refreshToken", refreshToken);
-  }
-}
-// --------------------------------------------------------
+export const setRefreshToken = (
+    token: string,
+    persist: "session" | "local" = "session"
+) => {
+  if (typeof window === "undefined") return;
+  sessionStorage.removeItem(REFRESH_TOKEN_KEY);
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
+  if (persist === "local") localStorage.setItem(REFRESH_TOKEN_KEY, token);
+  else sessionStorage.setItem(REFRESH_TOKEN_KEY, token);
+};
 
+export const clearTokens = () => {
+  if (typeof window === "undefined") return;
+  sessionStorage.removeItem(ACCESS_TOKEN_KEY);
+  sessionStorage.removeItem(REFRESH_TOKEN_KEY);
+  localStorage.removeItem(ACCESS_TOKEN_KEY);
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
+};
 
+// ---- Axios instance ----
 const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080",
-  withCredentials: false,
+  baseURL: API_BASE, // ex: https://host.tld  OR  https://host.tld/api
+  timeout: 30_000,
+  withCredentials: false, // flip to true if your BE uses cookie auth
 });
 
-// Interceptor: ก่อนส่ง Request (แนบบัตรผ่าน)
-api.interceptors.request.use((config) => {
+// ---- Request: attach Authorization if token exists ----
+api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const token = getAccessToken();
   if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+    config.headers = config.headers ?? {};
+    (config.headers as any).Authorization = `Bearer ${token}`;
   }
   return config;
 });
 
-
-// ✨ --- Interceptor: หลังได้รับ Response (จัดการเมื่อบัตรผ่านหมดอายุ) --- ✨
+// ---- Response: basic error passthrough (customize as needed) ----
 api.interceptors.response.use(
-  (response) => {
-    // ถ้า Response สำเร็จ (status 2xx) ก็ส่งต่อไปเลย ไม่ต้องทำอะไร
-    return response;
-  },
-  async (error: AxiosError) => {
-    const originalRequest = error.config;
-
-    // ตรวจสอบว่าเป็น Error 401 (Unauthorized) และยังไม่ได้ลอง retry มาก่อน
-    if (error.response?.status === 401 && originalRequest && !(originalRequest as any)._retry) {
-      (originalRequest as any)._retry = true; // ตั้งธงว่ากำลังจะ retry แล้วนะ (กันลูปนรก)
-
-      try {
-        const refreshToken = getRefreshToken();
-        if (!refreshToken) {
-          // ถ้าไม่มี refresh token ก็หมดหวัง -> logout
-          useAuthStore.getState().clearAuth();
-          window.location.href = '/login';
-          return Promise.reject(error);
-        }
-
-        console.log("Access token expired. Refreshing token...");
-
-        // เรียก API เพื่อขอ Access Token ใหม่โดยตรง (ไม่ผ่าน interceptor นี้)
-        const { data } = await axios.post(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/refresh`, {
-          refreshToken: refreshToken,
-        });
-
-        const { accessToken, user, refreshToken: newRefreshToken } = data;
-
-        // บันทึก Token และ User ใหม่ลง State และ Storage
-        useAuthStore.getState().setAuth(user, accessToken);
-        saveTokens(accessToken, newRefreshToken);
-
-        console.log("Token refreshed successfully. Retrying original request...");
-
-        // อัปเดต Header ของ request เดิมด้วย Token ใหม่
-        if (originalRequest.headers) {
-          originalRequest.headers.Authorization = `Bearer ${accessToken}`;
-        }
-
-        // ส่ง request เดิมซ้ำอีกครั้งด้วย instance `api` หลัก
-        return api(originalRequest);
-
-      } catch (refreshError) {
-        // ถ้าการ Refresh ก็ล้มเหลว (เช่น refresh token หมดอายุ/ไม่ถูกต้อง) -> logout
-        console.error("Refresh token failed. Logging out.", refreshError);
-        useAuthStore.getState().clearAuth();
-        window.location.href = '/login?session=expired'; // บังคับไปหน้า login พร้อมบอกเหตุผล
-        return Promise.reject(refreshError);
-      }
+    (res) => res,
+    async (error: AxiosError) => {
+      return Promise.reject(error);
     }
-
-    // ถ้าเป็น Error อื่นที่ไม่ใช่ 401 ก็ส่ง Error ต่อไปตามปกติ
-    return Promise.reject(error);
-  }
 );
+
+// ---- Tiny helper to build absolute URLs (useful for <img src=...>) ----
+export const buildUrl = (path = ""): string => {
+  if (!path) return API_BASE;
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE}${normalized}`;
+};
 
 export default api;
