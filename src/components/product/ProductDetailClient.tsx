@@ -188,14 +188,28 @@ export default function ProductDetailClient({ product }: ProductDetailClientProp
         </div>
 
         {/* CTA */}
-        <div className="mt-auto pt-8">
+        <div className="mt-auto pt-8 space-y-3">
           <button
-            onClick={handleAddToCart}
-            disabled={stockForSelectedVariant <= 0 || !selectedColor || !selectedSize}
-            className="w-full py-4 bg-black text-white font-bold rounded-lg hover:bg-gray-800 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+              onClick={handleAddToCart}
+              disabled={stockForSelectedVariant <= 0 || !selectedColor || !selectedSize}
+              className="w-full py-4 bg-black text-white font-bold rounded-lg hover:bg-gray-800 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
           >
             {stockForSelectedVariant > 0 ? "Add To Cart" : "Out of Stock"}
           </button>
+
+          {/* 👕 Try-On Button */}
+          {product.imageUrls?.[0] && (
+              <button
+                  onClick={() =>
+                      router.push(
+                          `/tryon?garmentUrl=${encodeURIComponent(product.imageUrls?.[0])}`
+                      )
+                  }
+                  className="w-full py-3 border border-black font-semibold rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                👕 ทดลองเสื้อตัวนี้ (Try-On)
+              </button>
+          )}
         </div>
       </div>
     </div>
