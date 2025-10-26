@@ -1,3 +1,4 @@
+// src/context/CartContext.tsx
 "use client";
 
 import {
@@ -9,7 +10,9 @@ import {
   useState,
   ReactNode,
 } from "react";
+import api from "@/lib/api";
 
+/* ---------------- Types ---------------- */
 export interface CartItem {
   productId: string;
   name: string;
@@ -34,37 +37,18 @@ interface CartContextType {
 }
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
-/* ---------------- helpers: token + fetch with timeout ---------------- */
+/* -------------- helpers: token/header -------------- */
 const ACCESS_TOKEN_KEY = "accessToken";
 const getAccessToken = () =>
-  typeof window === "undefined"
-    ? null
-    : sessionStorage.getItem(ACCESS_TOKEN_KEY) || localStorage.getItem(ACCESS_TOKEN_KEY);
+    typeof window === "undefined"
+        ? null
+        : sessionStorage.getItem(ACCESS_TOKEN_KEY) || localStorage.getItem(ACCESS_TOKEN_KEY);
 
-function authHeader() {
+const authHeaders = () => {
   const t = getAccessToken();
-  return t ? `Bearer ${t}` : "";
-}
-
-async function authFetch(url: string, init?: RequestInit, timeoutMs = 15000) {
-  const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), timeoutMs);
-
-  const headers = new Headers(init?.headers || {});
-  headers.set("Accept", "application/json");
-  if (init?.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-
-  const ah = authHeader();
-  if (ah) headers.set("Authorization", ah);
-
-  try {
-    return await fetch(url, { ...init, headers, cache: "no-store", signal: ctrl.signal });
-  } finally {
-    clearTimeout(to);
-  }
-}
+  return t ? { Authorization: `Bearer ${t}` } : {};
+};
 
 /* ---------------- Context Provider ---------------- */
 export function CartProvider({ children }: { children: ReactNode }) {
@@ -75,8 +59,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const total = useMemo(() => subTotal + shippingFee, [subTotal, shippingFee]);
   const itemCount = useMemo(
-    () => items.reduce((acc, it) => acc + (Number(it.quantity) || 0), 0),
-    [items]
+      () => items.reduce((acc, it) => acc + (Number(it.quantity) || 0), 0),
+      [items]
   );
 
   const mapFromBackend = (raw: any): CartItem => ({
@@ -99,21 +83,16 @@ export function CartProvider({ children }: { children: ReactNode }) {
       return;
     }
     try {
-      const res = await authFetch(`${API}/api/cart`, { method: "GET" });
-      if (!res.ok) {
-        console.error("[cart] GET /api/cart failed", res.status, await res.text());
-        return;
-      }
-      const data = await res.json();
+      const { data } = await api.get("/api/cart", { headers: authHeaders() });
       if (!mounted.current) return;
 
-      const mapped: CartItem[] = Array.isArray(data.items)
-        ? data.items.map(mapFromBackend)
-        : [];
+      const mapped: CartItem[] = Array.isArray(data?.items)
+          ? data.items.map(mapFromBackend)
+          : [];
 
       setItems(mapped);
-      setSubTotal(Number(data.subTotal ?? 0));
-      setShippingFee(Number(data.shippingFee ?? 0));
+      setSubTotal(Number(data?.subTotal ?? 0));
+      setShippingFee(Number(data?.shippingFee ?? 0));
     } catch (e) {
       console.error("[cart] GET /api/cart error", e);
     }
@@ -125,6 +104,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     return () => {
       mounted.current = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const addItem = async (i: CartItem) => {
@@ -134,53 +114,59 @@ export function CartProvider({ children }: { children: ReactNode }) {
       size: i.size,
       quantity: i.quantity,
     };
-    const res = await authFetch(`${API}/api/cart/items`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) console.error("[cart] POST /api/cart/items", res.status, await res.text());
+    try {
+      await api.post("/api/cart/items", body, { headers: authHeaders() });
+    } catch (e) {
+      console.error("[cart] POST /api/cart/items error", e);
+    }
     await refresh();
   };
 
   const updateItem = async (i: { productId: string; color: string; size: string; quantity: number }) => {
-    const res = await authFetch(`${API}/api/cart/items`, {
-      method: "PUT",
-      body: JSON.stringify(i),
-    });
-    if (!res.ok) console.error("[cart] PUT /api/cart/items", res.status, await res.text());
+    try {
+      await api.put("/api/cart/items", i, { headers: authHeaders() });
+    } catch (e) {
+      console.error("[cart] PUT /api/cart/items error", e);
+    }
     await refresh();
   };
 
   const removeItem = async (productId: string, color: string, size: string) => {
-    const qs = new URLSearchParams({ productId, color, size }).toString();
-    const res = await authFetch(`${API}/api/cart/items?${qs}`, { method: "DELETE" });
-    if (!res.ok) console.error("[cart] DELETE /api/cart/items", res.status, await res.text());
+    try {
+      const qs = new URLSearchParams({ productId, color, size }).toString();
+      await api.delete(`/api/cart/items?${qs}`, { headers: authHeaders() });
+    } catch (e) {
+      console.error("[cart] DELETE /api/cart/items error", e);
+    }
     await refresh();
   };
 
   const clearCart = async () => {
-    const res = await authFetch(`${API}/api/cart`, { method: "DELETE" });
-    if (!res.ok) console.error("[cart] DELETE /api/cart", res.status, await res.text());
+    try {
+      await api.delete("/api/cart", { headers: authHeaders() });
+    } catch (e) {
+      console.error("[cart] DELETE /api/cart error", e);
+    }
     await refresh();
   };
 
   return (
-    <CartContext.Provider
-      value={{
-        items,
-        subTotal,
-        shippingFee,
-        total,
-        itemCount,
-        refresh,
-        addItem,
-        updateItem,
-        removeItem,
-        clearCart,
-      }}
-    >
-      {children}
-    </CartContext.Provider>
+      <CartContext.Provider
+          value={{
+            items,
+            subTotal,
+            shippingFee,
+            total,
+            itemCount,
+            refresh,
+            addItem,
+            updateItem,
+            removeItem,
+            clearCart,
+          }}
+      >
+        {children}
+      </CartContext.Provider>
   );
 }
 
