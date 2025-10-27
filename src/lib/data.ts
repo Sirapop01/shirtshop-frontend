@@ -1,96 +1,139 @@
-// lib/data.ts
-import { Product, ImageInfo, VariantStock } from "@/types";
+// src/lib/data.ts
+// ศูนย์รวม data-fetch สำหรับสินค้า/หมวดหมู่ ฯลฯ
+// ทุกอย่างเรียกผ่าน axios instance เดียว (src/lib/api.ts)
+// แนวทาง: ตั้ง NEXT_PUBLIC_API_BASE เป็น "โดเมนล้วน" แล้วเรียก path `/api/...`
 
-const BACKEND_BASE_OAUTH = process.env.NEXT_PUBLIC_BACKEND_BASE_OAUTH; 
+import api from "@/lib/api";
+import type { Product } from "@/types";
 
-const api = (path: string) => `${BACKEND_BASE_OAUTH}${path}`;
+// ---------- Types ----------
+export type SortKey = "newest" | "price-asc" | "price-desc";
+export type PageParams = { page?: number; limit?: number; sort?: SortKey };
 
-
-const toNumber = (v: unknown, fallback = 0) => {
-  const n = typeof v === "number" ? v : v != null ? Number(v) : NaN;
-  return Number.isFinite(n) ? n : fallback;
+export type PagedResult<T> = {
+  items: T[];
+  total: number;
+  page: number;
+  limit: number;
 };
 
-function normalizeProduct(raw: any): Product {
-  // รูป: รองรับทั้ง imageUrls [] และ images [{url}]
-  const imageUrls: string[] =
-    Array.isArray(raw?.imageUrls) && raw.imageUrls.length > 0
-      ? raw.imageUrls
-      : Array.isArray(raw?.images)
-      ? (raw.images as any[]).map((i) => i?.url).filter(Boolean)
-      : [];
-
-  // images (object)
-  const images: ImageInfo[] = Array.isArray(raw?.images)
-    ? (raw.images as any[])
-        .map((i) => ({
-          publicId: i?.publicId ?? "",
-          url: i?.url ?? "",
-        }))
-        .filter((i) => i.url)
-    : [];
-
-  // variantStocks
-  const variantStocks: VariantStock[] = Array.isArray(raw?.variantStocks)
-    ? (raw.variantStocks as any[]).map((v) => ({
-        color: `${v?.color ?? ""}`.trim(),
-        size: `${v?.size ?? ""}`.trim(),
-        quantity: toNumber(v?.quantity, 0),
-      }))
-    : [];
-
-  return {
-    id: raw?.id ?? raw?._id ?? "",
-    name: raw?.name ?? "",
-    description: raw?.description ?? "",
-    price: toNumber(raw?.price, 0),
-    category: raw?.category ?? "Uncategorized",
-    imageUrls,
-    images,                 // ✅ ใส่คืน
-    variantStocks,          // ✅ ใส่คืน
-    availableColors: Array.isArray(raw?.availableColors) ? raw.availableColors : [],
-    availableSizes: Array.isArray(raw?.availableSizes) ? raw.availableSizes : [],
-    stockQuantity: toNumber(raw?.stockQuantity, 0),
-    createdAt: raw?.createdAt ?? raw?.created_at ?? "",
-  };
+function toQS(params: Record<string, any>) {
+  const q = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v === undefined || v === null || v === "") return;
+    q.set(k, String(v));
+  });
+  const s = q.toString();
+  return s ? `?${s}` : "";
 }
 
-/** ดึงสินค้าทั้งหมด */
-export async function getProducts(): Promise<Product[]> {
-  try {
-    const res = await fetch(api("/api/products"), { cache: "no-store" });
-    if (!res.ok) throw new Error(`Failed to fetch products: ${res.status}`);
-    const data = await res.json();
-    return Array.isArray(data) ? data.map(normalizeProduct) : [];
-  } catch (err) {
-    console.error("[getProducts] Error:", err);
-    return [];
+// ---------- Product list ----------
+export async function getProducts(params: PageParams = {}): Promise<Product[]> {
+  // รองรับทั้งกรณีที่ BE คืน {items,total,...} และกรณีคืน array ตรงๆ
+  const { data } = await api.get("/api/products" + toQS(params));
+  if (Array.isArray(data)) return data as Product[];
+  if (data?.items && Array.isArray(data.items)) return data.items as Product[];
+  return [];
+}
+
+// แบบแบ่งหน้า (ถ้าหน้าใดต้องการ pagination เต็มๆ)
+export async function getProductsPaged(params: PageParams = {}): Promise<PagedResult<Product>> {
+  const { data } = await api.get("/api/products" + toQS(params));
+  if (data?.items && typeof data.total !== "undefined") {
+    return {
+      items: data.items as Product[],
+      total: Number(data.total ?? 0),
+      page: Number(data.page ?? params.page ?? 1),
+      limit: Number(data.limit ?? params.limit ?? 20),
+    };
   }
+  // ถ้า BE คืน array เปล่าๆ สร้างผลลัพธ์ให้ใช้งานได้
+  const arr: Product[] = Array.isArray(data) ? data : [];
+  return { items: arr, total: arr.length, page: 1, limit: arr.length || (params.limit ?? 20) };
 }
 
-/** ดึงสินค้าแบบรายตัว */
+// ---------- Product detail ----------
 export async function getProductById(id: string): Promise<Product | null> {
-  try {
-    const res = await fetch(api(`/api/products/${id}`), { cache: "no-store" });
-    if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`Failed to fetch product ${id}: ${res.status}`);
-    const raw = await res.json();
-    return normalizeProduct(raw);
-  } catch (err) {
-    console.error("[getProductById] Error:", err);
+  if (!id) {
+    console.error("[getProductById] missing id");
     return null;
   }
+  const { data } = await api.get(`/api/products/${encodeURIComponent(id)}`);
+  return (data as Product) ?? null;
 }
 
-export async function getProductsByCategory(category: string): Promise<Product[] | null> {
-  try {
-    const res = await fetch(api(`/api/products/category/${encodeURIComponent(category)}`), { cache: "no-store" });
-    if (res.status === 404) return [];
-    if (!res.ok) throw new Error(`Failed to fetch products for category ${category}: ${res.status}`);
-    const data = await res.json();
-    return Array.isArray(data) ? data.map(normalizeProduct) : [];
-  } catch (err) {
-    console.error("[getProductsByCategory] Error:", err);
-    return null;
+// ---------- Category ----------
+export async function getCategories(): Promise<string[]> {
+  const { data } = await api.get("/api/categories");
+  if (Array.isArray(data)) return data.map((x) => String(x));
+  if (Array.isArray(data?.items)) return data.items.map((x: any) => String(x?.name ?? x));
+  return [];
+}
+
+export async function getProductsByCategory(
+    category: string,
+    params: PageParams = {}
+): Promise<Product[]> {
+  if (!category) return [];
+  const { data } = await api.get(
+      `/api/categories/${encodeURIComponent(category)}/products` + toQS(params)
+  );
+  if (Array.isArray(data)) return data as Product[];
+  if (data?.items && Array.isArray(data.items)) return data.items as Product[];
+  return [];
+}
+
+// ---------- Search ----------
+export async function searchProducts(
+    q: string,
+    params: PageParams = {}
+): Promise<Product[]> {
+  if (!q) return [];
+  const { data } = await api.get("/api/products/search" + toQS({ q, ...params }));
+  if (Array.isArray(data)) return data as Product[];
+  if (data?.items && Array.isArray(data.items)) return data.items as Product[];
+  return [];
+}
+
+// ---------- Highlights / Collections ----------
+export async function getNewArrival(limit = 12): Promise<Product[]> {
+  const { data } = await api.get("/api/products/new" + toQS({ limit }));
+  return Array.isArray(data) ? (data as Product[]) : Array.isArray(data?.items) ? data.items : [];
+}
+
+export async function getFeatured(limit = 12): Promise<Product[]> {
+  const { data } = await api.get("/api/products/featured" + toQS({ limit }));
+  return Array.isArray(data) ? (data as Product[]) : Array.isArray(data?.items) ? data.items : [];
+}
+
+export async function getRelatedProducts(
+    productId: string,
+    limit = 8
+): Promise<Product[]> {
+  if (!productId) return [];
+  const { data } = await api.get(
+      `/api/products/${encodeURIComponent(productId)}/related` + toQS({ limit })
+  );
+  if (Array.isArray(data)) return data as Product[];
+  if (data?.items && Array.isArray(data.items)) return data.items as Product[];
+  return [];
+}
+
+// ---------- Utilities (optional) ----------
+// จัดเรียงฝั่ง FE ถ้าจำเป็น (ถ้า BE รองรับ sort แล้ว ไม่ต้องใช้)
+export function sortProducts(products: Product[], sort: SortKey = "newest"): Product[] {
+  const arr = [...products];
+  switch (sort) {
+    case "price-asc":
+      return arr.sort((a, b) => (a.price ?? 0) - (b.price ?? 0));
+    case "price-desc":
+      return arr.sort((a, b) => (b.price ?? 0) - (a.price ?? 0));
+    case "newest":
+    default:
+      return arr.sort(
+          (a, b) =>
+              new Date(String(b.createdAt ?? 0)).getTime() -
+              new Date(String(a.createdAt ?? 0)).getTime()
+      );
   }
 }

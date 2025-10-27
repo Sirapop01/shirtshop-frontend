@@ -60,6 +60,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
 
 function ProductCard({ product }: { product: Product }) {
     const THB = (n: number) => new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB" }).format(n);
+
     const imageUrl = product.imageUrls?.[0] || "/placeholder.png";
 
     return (
