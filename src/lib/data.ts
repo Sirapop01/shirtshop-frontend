@@ -1,7 +1,7 @@
 // lib/data.ts
 import { Product, ImageInfo, VariantStock } from "@/types";
 
-const BACKEND_BASE_OAUTH = process.env.NEXT_PUBLIC_BACKEND_BASE_OAUTH; 
+const BACKEND_BASE_OAUTH = process.env.NEXT_PUBLIC_API_BASE; 
 
 const api = (path: string) => `${BACKEND_BASE_OAUTH}${path}`;
 
@@ -61,6 +61,7 @@ export async function getProducts(): Promise<Product[]> {
     const res = await fetch(api("/api/products"), { cache: "no-store" });
     if (!res.ok) throw new Error(`Failed to fetch products: ${res.status}`);
     const data = await res.json();
+    console.log(data);
     return Array.isArray(data) ? data.map(normalizeProduct) : [];
   } catch (err) {
     console.error("[getProducts] Error:", err);
