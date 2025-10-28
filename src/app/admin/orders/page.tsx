@@ -1,3 +1,4 @@
+// admin/orders/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState, useCallback } from "react";

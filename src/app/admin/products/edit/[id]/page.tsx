@@ -1,3 +1,4 @@
+// admin/products/edit/[id]/page.tsx
 "use client";
 
 import { useState, useEffect, FormEvent, ChangeEvent, useMemo } from "react";
