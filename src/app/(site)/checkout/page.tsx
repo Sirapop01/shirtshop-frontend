@@ -6,6 +6,7 @@ import { useCart } from "@/context/CartContext";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useThaiLocations } from "@/lib/useThaiLocations";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
@@ -29,6 +30,56 @@ type OrderItem = {
   size: string;
   quantity: number;
 };
+const preferName = (name?: string | null, code?: string | null) =>
+  (name && name.trim()) ? name : (code ?? "")
+
+const normalizeAddr = (a: AnyAddr) => {
+  return {
+    fullName: a.fullName ?? a.recipientName ?? "",
+    phone: a.phone ?? "",
+    addressLine1: a.addressLine1 ?? a.line1 ?? "",
+    line2: a.line2 ?? "",
+    subdistrict: a.subdistrict ?? a.subDistrict ?? "",
+    districtName: a.districtName ?? "",
+    district: a.district ?? "",
+    provinceName: a.provinceName ?? "",
+    province: a.province ?? "",
+    postalCode: a.postalCode ?? a.postcode ?? "",
+  };
+};
+
+const formatThaiAddress = (a: AnyAddr) => {
+  const n = normalizeAddr(a);
+  const dist = preferName(n.districtName, n.district);
+  const prov = preferName(n.provinceName, n.province);
+  return [
+    n.subdistrict && `ต.${n.subdistrict}`,
+    dist && `อ.${dist}`,
+    prov && `จ.${prov}`,
+    n.postalCode,
+  ].filter(Boolean).join(" ");
+};
+
+type AnyAddr = {
+  id?: string;
+  // ชื่อ/เบอร์ + บรรทัดแรก
+  fullName?: string | null;
+  recipientName?: string | null;   // จาก snapshot order
+  phone?: string | null;
+  addressLine1?: string | null;    // จากหน้าที่อยู่
+  line1?: string | null;           // จาก snapshot order
+  line2?: string | null;
+
+  // เขต/จังหวัด (รองรับทั้ง response ของ address และ snapshot order)
+  subdistrict?: string | null;
+  subDistrict?: string | null;
+  district?: string | null;
+  districtName?: string | null;
+  province?: string | null;
+  provinceName?: string | null;
+  postalCode?: string | null;
+  postcode?: string | null;
+};
 
 type ShippingAddress = {
   id?: string; // when coming from /api/addresses
@@ -39,7 +90,9 @@ type ShippingAddress = {
   subdistrict?: string | null;
   district?: string | null;
   province?: string | null;
-  postcode?: string | null;
+  districtName?: string | null;   // ✅ ชื่ออำเภอ
+  provinceName?: string | null;   // ✅ ชื่อจังหวัด
+  postalCode?: string | null;
   isDefault?: boolean;
 };
 
@@ -90,7 +143,8 @@ export default function CheckoutPage() {
   const [addresses, setAddresses] = useState<AddressListItem[]>([]);
   const [addrLoading, setAddrLoading] = useState(false);
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
-
+  
+  const { getProvinceNameById, getAmphureNameById } = useThaiLocations();
   /* ----- redirect unauthenticated ----- */
   useEffect(() => {
     if (!getAccessToken()) {
@@ -199,6 +253,24 @@ export default function CheckoutPage() {
     }
   };
 
+  const formatThaiAddress = (a: AnyAddr) => {
+    const n = normalizeAddr(a);
+    // ถ้าไม่มีชื่อ ให้ลอง map จากรหัสก่อน แล้วค่อย fallback เป็นรหัสจริง ๆ
+    const dist =
+      n.districtName ||
+      (n.district ? getAmphureNameById(String(n.district)) : "") ||
+      n.district;
+
+    const prov =
+      n.provinceName ||
+      (n.province ? getProvinceNameById(String(n.province)) : "") ||
+      n.province;
+
+    return [n.subdistrict && `ต.${n.subdistrict}`, dist && `อ.${dist}`, prov && `จ.${prov}`, n.postalCode]
+      .filter(Boolean)
+      .join(" ");
+  };
+
   /* ----- slip handlers ----- */
   const onSlipChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSlipError(null);
@@ -272,7 +344,18 @@ export default function CheckoutPage() {
         {/* หลังสร้างออเดอร์: แช่แข็ง (แสดง snapshot จาก BE ถ้ามี) */}
         {order ? (
           chosenAddress ? (
-            <AddressCard a={chosenAddress} frozen />
+            (() => {
+              const n = normalizeAddr(chosenAddress as any);
+              return (
+                <div className="rounded-xl border p-3 bg-white/60">
+                  <div className="font-medium text-gray-900">{n.fullName || "-"}</div>
+                  <div className="text-sm text-gray-500">· {n.phone || "-"}</div>
+                  {n.addressLine1 && <div className="text-sm text-gray-700">{n.addressLine1}</div>}
+                  {n.line2 && <div className="text-sm text-gray-700">{n.line2}</div>}
+                  <div className="text-sm text-gray-700">{formatThaiAddress(chosenAddress as any)}</div>
+                </div>
+              );
+            })()
           ) : (
             <p className="text-sm text-gray-500">—</p>
           )
@@ -287,23 +370,38 @@ export default function CheckoutPage() {
               </div>
             ) : (
               <ul className="space-y-2">
-                {addresses.map(a => (
-                  <li key={a.id} className="flex items-start gap-2">
-                    <input
-                      type="radio"
-                      name="addr"
-                      value={a.id}
-                      className="mt-1"
-                      checked={selectedAddressId === a.id}
-                      onChange={() => setSelectedAddressId(a.id!)}
-                    />
-                    <AddressCard a={a} />
-                  </li>
-                ))}
+                {addresses.map(a => {
+                  const n = normalizeAddr(a as any);
+                  const inputId = `addr-${a.id}`;             // 👈 สร้าง id
+                  return (
+                    <li key={a.id} className="flex items-start gap-2">
+                      <input
+                        id={inputId}                           // 👈 ใส่ id ให้ input
+                        type="radio"
+                        name="addr"
+                        value={a.id}
+                        className="mt-1"
+                        checked={selectedAddressId === a.id}
+                        onChange={() => setSelectedAddressId(a.id!)}
+                      />
+                      <label
+                        htmlFor={inputId}                      // 👈 htmlFor ให้ตรงกับ id
+                        className="flex-1 rounded-xl border p-3 cursor-pointer"
+                      >
+                        <div className="font-medium text-gray-900">{n.fullName || "-"}</div>
+                        <div className="text-sm text-gray-500">· {n.phone || "-"}</div>
+                        {n.addressLine1 && <div className="text-sm text-gray-700">{n.addressLine1}</div>}
+                        {n.line2 && <div className="text-sm text-gray-700">{n.line2}</div>}
+                        <div className="text-sm text-gray-700">{formatThaiAddress(a as any)}</div>
+                      </label>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </>
         )}
+
       </section>
 
       {/* 2) สรุปรายการ */}
@@ -426,7 +524,7 @@ function AddressCard({ a, frozen = false }: { a: ShippingAddress; frozen?: boole
     <div className={`flex-1 rounded-lg border p-3 ${frozen ? "bg-gray-50" : ""}`}>
       <div className="font-medium">{a.recipientName} <span className="text-gray-500">· {a.phone}</span></div>
       <div className="text-sm text-gray-700">
-        {[a.line1, a.line2, a.subdistrict, a.district, a.province, a.postcode].filter(Boolean).join(" ")}
+        {[a.line1, a.line2, formatThaiAddress(a)].filter(Boolean).join(" ")}
       </div>
     </div>
   );

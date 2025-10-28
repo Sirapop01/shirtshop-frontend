@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useAuth } from "@/context/AuthContext";
+import { useThaiLocations } from "@/lib/useThaiLocations";
+
 
 /* ---------------- Types ---------------- */
 type OrderStatus =
@@ -17,6 +19,10 @@ type OrderItem = {
   name?: string;
   quantity?: number; // backend ของคุณใช้ quantity
   price?: number;
+  unitPrice?: number;     // ✅ ราคา/ชิ้น (ใช้ชื่อเดียวกับ backend)
+  color?: string;         // ✅ สี
+  size?: string;          // ✅ ไซส์
+  imageUrl?: string;
 };
 
 type Order = {
@@ -33,6 +39,9 @@ type Order = {
   createdAt?: string;
   updatedAt?: string;
   rejectReason?: string | null; // ใช้ field เดิมส่งเหตุผล ทั้ง reject/cancel
+
+  addressId?: string | null;
+  address?: Address | null;
 };
 
 type Page<T> = {
@@ -44,6 +53,7 @@ type Page<T> = {
 };
 
 type Address = {
+  recipientName?: string | null;
   fullName?: string | null;
   phone?: string | null;
   line1?: string | null;
@@ -53,6 +63,35 @@ type Address = {
   province?: string | null;
   postcode?: string | null;
 };
+
+type ShippingLike = {
+  fullName?: string | null;      // ⬅️ เพิ่มบรรทัดนี้
+  recipientName?: string | null;
+  phone?: string | null;
+  line1?: string | null;
+  line2?: string | null;
+  subDistrict?: string | null;   // ตำบล (ชื่อ)
+  subdistrict?: string | null;   // กันชื่อฟิลด์อีกแบบ
+  district?: string | null;      // รหัส/ชื่ออำเภอ
+  districtName?: string | null;  // ชื่ออำเภอ (ถ้า BE ส่งมา)
+  province?: string | null;      // รหัส/ชื่อจังหวัด
+  provinceName?: string | null;  // ชื่อจังหวัด (ถ้า BE ส่งมา)
+  postcode?: string | null;
+  postalCode?: string | null;
+};
+
+const fmtBaht = (n: number) => `฿${n.toLocaleString("th-TH")}`;
+
+const initialsOf = (name: string) =>
+  name.trim().split(/\s+/).map(w => w[0]).join("").slice(0,2).toUpperCase();
+
+const Chip: React.FC<React.PropsWithChildren> = ({ children }) => (
+  <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium text-gray-700">
+    {children}
+  </span>
+);
+
+
 
 type UserLite = { id: string; fullName: string; email: string; address?: Address | null; };
 
@@ -147,6 +186,45 @@ export default function AdminOrdersPage() {
     }),
     [token]
   );
+
+  // ใช้แทนรูปถ้าโหลดไม่ได้
+  const IMG_FALLBACK =
+    "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODQiIGhlaWdodD0iODQiIHZpZXdCb3g9IjAgMCA4NCA4NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iODQiIGhlaWdodD0iODQiIHJ4PSIxMiIgZmlsbD0iI2Y1ZjVmNSIvPjxwYXRoIGQ9Ik00OSA0MUwzOSAzMSAyOSA0MSIgc3Ryb2tlPSIjY2NjIiBzdHJva2Utd2lkdGg9IjMiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjxyZWN0IHg9IjIwIiB5PSIyMCIgd2lkdGg9IjQ0IiBoZWlnaHQ9IjQ0IiByeD0iOCIgc3Ryb2tlPSIjZGRkIiBzdHJva2Utd2lkdGg9IjIiLz48L3N2Zz4=";
+
+
+  const { getProvinceNameById, getAmphureNameById } = useThaiLocations();
+  const formatShipping = useCallback((sa?: ShippingLike) => {
+    if (!sa) return { header: "", lines: [] as string[] };
+
+    let dist = sa.districtName?.trim() || "";
+    let prov = sa.provinceName?.trim() || "";
+
+    const maybeDist = sa.district?.toString().trim();
+    const maybeProv = sa.province?.toString().trim();
+
+    if (!dist && maybeDist) {
+      dist = /^\d+$/.test(maybeDist)
+        ? (getAmphureNameById(maybeDist) || "")
+        : maybeDist;
+    }
+    if (!prov && maybeProv) {
+      prov = /^\d+$/.test(maybeProv)
+        ? (getProvinceNameById(maybeProv) || "")
+        : maybeProv;
+    }
+
+    const sub = sa.subDistrict ?? sa.subdistrict ?? "";
+    const zip = sa.postalCode ?? sa.postcode ?? "";
+    const lineA = sa.line1 || "";
+    const lineB = [sub && `ต.${sub}`, dist && `อ.${dist}`, prov && `จ.${prov}`, zip]
+      .filter(Boolean)
+      .join(" ");
+
+    return {
+      header: sa.recipientName ?? sa.fullName ?? "",
+      lines: [sa.phone || "", lineA, lineB].filter(Boolean),
+    };
+  }, [getAmphureNameById, getProvinceNameById]);
 
   /* ------------- fetch orders ------------- */
   const load = useCallback(async () => {
@@ -621,20 +699,18 @@ const filtered = useMemo(() => {
         </div>
       </div>
 
-      {/* ===== View Modal ===== */}
       {viewOpen && viewOrder && (
         <div
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/30 p-4"
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-4 sm:items-center"
           onClick={() => setViewOpen(false)}
         >
           <div
             className="w-full max-w-3xl rounded-2xl bg-white shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
+            {/* Header */}
             <div className="flex items-center justify-between border-b px-6 py-4">
-              <h3 className="text-lg font-semibold">
-                Order #{viewOrder.id.slice(-6)}
-              </h3>
+              <h3 className="text-lg font-semibold">Order #{viewOrder.id.slice(-6)}</h3>
               <button
                 className="rounded-md px-2 py-1 text-sm text-gray-500 hover:bg-gray-100"
                 onClick={() => setViewOpen(false)}
@@ -643,83 +719,141 @@ const filtered = useMemo(() => {
               </button>
             </div>
 
-            <div className="grid gap-4 p-6 sm:grid-cols-2">
-              <div>
-                <div className="text-sm text-gray-500">Customer</div>
-                <div className="font-medium">
-                  {userMap[viewOrder.userId]?.fullName ?? viewOrder.userId}
+            {/* Customer / Payment */}
+            <div className="grid gap-6 p-6 sm:grid-cols-2">
+              {/* Customer card */}
+              <div className="rounded-xl border bg-white p-4 shadow-sm">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  Customer
                 </div>
-                <div className="text-xs text-gray-500">
-                  {userMap[viewOrder.userId]?.email || ""}
-                </div>
-                
-              </div>
-
-              <div>
-                <div className="text-sm text-gray-500">Payment</div>
-                <div className="font-medium uppercase">
-                  {viewOrder.paymentMethod}
-                </div>
-                {viewOrder.paymentSlipUrl && (
-                  <a
-                    href={viewOrder.paymentSlipUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-1 inline-flex text-xs text-blue-600 hover:underline"
-                  >
-                    เปิดสลิป
-                  </a>
-                )}
-              </div>
-
-              <div className="sm:col-span-2">
-                <div className="mb-2 text-sm text-gray-500">Items</div>
-                <div className="divide-y rounded-xl border">
-                  {viewOrder.items.map((it, i) => {
-                    const qty = it.quantity ?? 0;
-                    return (
-                      <div
-                        key={i}
-                        className="flex items-center justify-between px-4 py-3"
-                      >
-                        <div className="text-sm">
-                          <div className="font-medium">
-                            {it.name ?? it.productId}
-                          </div>
-                          <div className="text-xs text-gray-500">× {qty}</div>
-                        </div>
-                        <div className="text-sm text-gray-700">
-                          {it.price
-                            ? it.price.toLocaleString("th-TH")
-                            : ""}
+                {(() => {
+                  const cust = userMap[viewOrder.userId];
+                  const name = cust?.fullName ?? String(viewOrder.userId);
+                  const mail = cust?.email ?? "";
+                  const initials = initialsOf(name);
+                  return (
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-sm font-semibold text-gray-700">
+                        {initials}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="truncate font-medium text-gray-900">{name}</div>
+                        <div className="truncate text-xs text-gray-500">
+                          {mail ? (
+                            <a href={`mailto:${mail}`} className="hover:underline">
+                              {mail}
+                            </a>
+                          ) : (
+                            <span>—</span>
+                          )}
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
+                  );
+                })()}
               </div>
 
-              <div className="sm:col-span-2">
-                <div className="flex justify-end gap-6 text-sm">
-                  <div>
-                    สินค้า{" "}
-                    <span className="font-semibold">
-                      {viewOrder.subTotal.toLocaleString("th-TH")}
-                    </span>
-                  </div>
-                  <div>
-                    ส่ง{" "}
-                    <span className="font-semibold">
-                      {viewOrder.shippingFee.toLocaleString("th-TH")}
-                    </span>
-                  </div>
-                  <div>
-                    รวม{" "}
-                    <span className="font-semibold">
-                      {viewOrder.total.toLocaleString("th-TH")}
-                    </span>
-                  </div>
+              {/* Payment card */}
+              <div className="rounded-xl border bg-white p-4 shadow-sm">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  Payment
                 </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Chip>{String(viewOrder.paymentMethod ?? "").toUpperCase()}</Chip>
+                  {viewOrder.expiresAt && (
+                    <span className="text-xs text-gray-500">
+                      หมดอายุ {new Date(viewOrder.expiresAt).toLocaleString("th-TH")}
+                    </span>
+                  )}
+                  {viewOrder.paymentSlipUrl && (
+                    <a
+                      href={viewOrder.paymentSlipUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                    >
+                      เปิดสลิป
+                    </a>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Items */}
+            <div className="grid gap-4 px-6">
+              <div className="sm:col-span-2">
+                <div className="mb-2 text-sm text-gray-500">Items</div>
+                <div className="divide-y rounded-xl border bg-white shadow-sm">
+                  {viewOrder.items?.map((it, i) => {
+                  const qty = it.quantity ?? 0;
+                  const price = it.unitPrice ?? 0;
+                  const lineTotal = price * qty;
+                  return (
+                    <div key={i} className="flex items-start justify-between gap-4 p-4">
+                      {/* Left: thumbnail + text */}
+                      <div className="flex min-w-0 items-start gap-3">
+                        <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg border bg-gray-50">
+                          <img
+                            src={it.imageUrl || IMG_FALLBACK}
+                            alt={it.name || "product"}
+                            className="h-full w-full object-cover"
+                            onError={(e) => { (e.currentTarget as HTMLImageElement).src = IMG_FALLBACK; }}
+                          />
+                        </div>
+
+                        <div className="min-w-0">
+                          <div className="truncate font-medium">{it.name ?? it.productId}</div>
+                          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-600">
+                            {it.color && <Chip>สี {it.color}</Chip>}
+                            {it.size  && <Chip>ไซส์ {it.size}</Chip>}
+                            <span className="text-gray-500">{fmtBaht(price)} × {qty}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right: line total */}
+                      <div className="text-right">
+                        <div className="text-sm font-semibold">{fmtBaht(lineTotal)}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+                </div>
+              </div>
+            </div>
+
+            {/* Shipping to */}
+            <div className="grid gap-4 p-6">
+              <div className="sm:col-span-2">
+                <div className="mb-2 text-sm text-gray-500">Shipping to</div>
+                {(() => {
+                  const raw = (viewOrder as any).shippingAddress ?? (viewOrder as any).address;
+                  const ship = formatShipping(raw); // ✅ จะได้ชื่ออำเภอ/จังหวัดเสมอ
+                  return (
+                    <div className="rounded-xl border bg-white p-4 shadow-sm">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="font-medium">{ship.header || "-"}</div>
+                        <span className="text-xs text-gray-400">Shipping address</span>
+                      </div>
+                      <div className="mt-2 space-y-1 text-sm text-gray-700">
+                        {ship.lines.map((ln, i) => (<div key={i}>{ln}</div>))}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* Totals */}
+            <div className="flex justify-end gap-6 px-6 pb-6 text-sm">
+              <div>
+                สินค้า <span className="font-semibold">{viewOrder.subTotal.toLocaleString("th-TH")}</span>
+              </div>
+              <div>
+                ส่ง <span className="font-semibold">{viewOrder.shippingFee.toLocaleString("th-TH")}</span>
+              </div>
+              <div>
+                รวม <span className="font-semibold">{viewOrder.total.toLocaleString("th-TH")}</span>
               </div>
             </div>
           </div>
