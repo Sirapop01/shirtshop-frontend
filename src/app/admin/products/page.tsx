@@ -1,9 +1,12 @@
+// src/app/admin/products/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
+import axios, { AxiosError } from "axios";
+import api, { buildUrl } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 
 /* ---------------- Types ---------------- */
@@ -14,7 +17,7 @@ interface Product {
   name: string;
   category: string;
   price: number;
-  stockQuantity?: number; // BE รวมยอดสต็อกทั้งหมด
+  stockQuantity?: number; // รวมทุกสี/ไซส์
   variantStocks?: { color: string; size: string; quantity: number }[];
   images?: ImageInfo[];
   imageUrls?: string[]; // fallback
@@ -25,7 +28,11 @@ type SortKey = "name" | "category" | "price" | "stock";
 
 /* ---------------- Utils ---------------- */
 const THB = new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB" });
-const coverImage = (p: Product) => p.images?.[0]?.url ?? p.imageUrls?.[0] ?? "/placeholder.png";
+const coverImageUrl = (p: Product) => {
+  const raw = p.images?.[0]?.url ?? p.imageUrls?.[0] ?? "/placeholder.png";
+  // กันเคส BE ส่งมาเป็น path relative
+  return raw.startsWith("/") || raw.startsWith("http") ? buildUrl(raw) : raw;
+};
 
 /* ============================================================ */
 
@@ -55,23 +62,24 @@ export default function AdminProductsPage() {
     setPageLoading(false);
   }, [authLoading, user, isAdmin, router]);
 
-  /* ------------ Fetch products ------------ */
+  /* ------------ Fetch products (axios instance + .env) ------------ */
   const fetchProducts = useCallback(async () => {
     if (!token) return;
     setFetchError("");
     try {
-      const res = await fetch("http://localhost:8080/api/products", {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        cache: "no-store",
+      const res = await api.get<Product[]>("/api/products", {
+        headers: { "Cache-Control": "no-cache" },
       });
-      if (!res.ok) {
-        setFetchError(`Failed to fetch products (${res.status})`);
-        return;
+      setProducts(res.data ?? []);
+    } catch (err: unknown) {
+      let msg = "Failed to fetch products";
+      if (axios.isAxiosError(err)) {
+        const ax = err as AxiosError<any>;
+        msg = ax.response?.data?.message || ax.response?.data?.error || ax.message || msg;
+      } else if (err instanceof Error) {
+        msg = err.message || msg;
       }
-      const data: Product[] = await res.json();
-      setProducts(data ?? []);
-    } catch (err: any) {
-      setFetchError(err?.message || "Failed to fetch products");
+      setFetchError(msg);
     }
   }, [token]);
 
@@ -90,7 +98,9 @@ export default function AdminProductsPage() {
     const q = query.trim().toLowerCase();
     return products
       .filter((p) => (category === "All" ? true : p.category === category))
-      .filter((p) => (!q ? true : p.name.toLowerCase().includes(q) || p.category?.toLowerCase().includes(q)));
+      .filter((p) =>
+        !q ? true : p.name.toLowerCase().includes(q) || p.category?.toLowerCase().includes(q)
+      );
   }, [products, category, query]);
 
   const sorted = useMemo(() => {
@@ -130,34 +140,27 @@ export default function AdminProductsPage() {
     }
   };
 
-  /* ------------ Delete ------------ */
+  /* ------------ Delete (axios instance) ------------ */
   const handleDelete = async (id: string) => {
     if (!token) return;
     if (!confirm("แน่ใจหรือไม่ว่าต้องการลบสินค้า? การลบนี้ไม่สามารถย้อนกลับได้.")) return;
     try {
       setDeletingId(id);
-      const res = await fetch(`http://localhost:8080/api/products/${id}`, {
-        method: "DELETE",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!res.ok) throw new Error(`Delete failed (${res.status})`);
+      await api.delete(`/api/products/${id}`);
       setProducts((prev) => prev.filter((p) => p.id !== id));
-    } catch (err: any) {
-      alert(err?.message || "Failed to delete.");
+    } catch (err: unknown) {
+      let msg = "Failed to delete.";
+      if (axios.isAxiosError(err)) {
+        const ax = err as AxiosError<any>;
+        msg = ax.response?.data?.message || ax.response?.data?.error || ax.message || msg;
+      } else if (err instanceof Error) {
+        msg = err.message || msg;
+      }
+      alert(msg);
     } finally {
       setDeletingId(null);
     }
   };
-
-  /* ------------ UI bits ------------ */
-  const stockBadge = (qty?: number) => {
-    const n = qty ?? 0;
-    const base = "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1";
-    if (n <= 0) return <span className={`${base} bg-red-50 text-red-700 ring-red-200`}>Out of stock</span>;
-    if (n <= 5) return <span className={`${base} bg-amber-50 text-amber-700 ring-amber-200`}>Low: {n}</span>;
-    return <span className={`${base} bg-emerald-50 text-emerald-700 ring-emerald-200`}>{n}</span>;
-  };
-
 
   /* ------------ Loading / Empty ------------ */
   if (authLoading || pageLoading) {
@@ -195,7 +198,10 @@ export default function AdminProductsPage() {
         />
         <KpiCard
           label="Low stock (≤5)"
-          value={String(products.filter((p) => (p.stockQuantity ?? 0) > 0 && (p.stockQuantity ?? 0) <= 5).length)}
+          value={String(
+            products.filter((p) => (p.stockQuantity ?? 0) > 0 && (p.stockQuantity ?? 0) <= 5)
+              .length
+          )}
         />
         <KpiCard
           label="Out of stock"
@@ -259,7 +265,9 @@ export default function AdminProductsPage() {
           <button
             onClick={() => setView("table")}
             className={`rounded-lg px-3 py-1.5 text-sm ${
-              view === "table" ? "bg-gray-900 text-white" : "border border-gray-200 bg-white text-gray-700"
+              view === "table"
+                ? "bg-gray-900 text-white"
+                : "border border-gray-200 bg-white text-gray-700"
             }`}
           >
             Table
@@ -267,7 +275,9 @@ export default function AdminProductsPage() {
           <button
             onClick={() => setView("grid")}
             className={`rounded-lg px-3 py-1.5 text-sm ${
-              view === "grid" ? "bg-gray-900 text-white" : "border border-gray-200 bg-white text-gray-700"
+              view === "grid"
+                ? "bg-gray-900 text-white"
+                : "border border-gray-200 bg-white text-gray-700"
             }`}
           >
             Grid
@@ -291,9 +301,18 @@ export default function AdminProductsPage() {
       {view === "grid" ? (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
           {sorted.map((p) => (
-            <div key={p.id} className="group rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+            <div
+              key={p.id}
+              className="group rounded-2xl border border-gray-200 bg-white p-3 shadow-sm"
+            >
               <div className="relative h-40 w-full overflow-hidden rounded-xl bg-gray-100">
-                <Image src={coverImage(p)} alt={p.name} fill sizes="(max-width:768px) 50vw, 25vw" className="object-cover transition-transform duration-300 group-hover:scale-105" />
+                <Image
+                  src={coverImageUrl(p)}
+                  alt={p.name}
+                  fill
+                  sizes="(max-width:768px) 50vw, 25vw"
+                  className="object-cover transition-transform duration-300 group-hover:scale-105"
+                />
               </div>
               <div className="mt-3 space-y-1">
                 <div className="truncate text-sm font-medium text-gray-900">{p.name}</div>
@@ -348,7 +367,7 @@ export default function AdminProductsPage() {
                 <tr key={p.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3">
                     <div className="relative h-12 w-12 overflow-hidden rounded-md bg-gray-100">
-                      <Image src={coverImage(p)} alt={p.name} fill sizes="48px" className="object-cover" />
+                      <Image src={coverImageUrl(p)} alt={p.name} fill sizes="48px" className="object-cover" />
                     </div>
                   </td>
                   <td className="px-4 py-3 font-medium text-gray-900">{p.name}</td>
@@ -388,7 +407,9 @@ export default function AdminProductsPage() {
 
       {/* Error */}
       {fetchError && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{fetchError}</div>
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {fetchError}
+        </div>
       )}
 
       {/* Footnote */}
@@ -400,6 +421,26 @@ export default function AdminProductsPage() {
 }
 
 /* ---------------- Small UI components ---------------- */
+
+/* Stock badge helper */
+function stockBadge(qty?: number) {
+  const n = Number(qty ?? 0);
+  let cls =
+    n <= 0
+      ? "bg-red-50 text-red-700 ring-red-200"
+      : n <= 5
+      ? "bg-amber-50 text-amber-700 ring-amber-200"
+      : "bg-emerald-50 text-emerald-700 ring-emerald-200";
+
+  const label = n <= 0 ? "Out" : n <= 5 ? `Low • ${n}` : String(n);
+
+  return (
+    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ${cls}`}>
+      {label}
+    </span>
+  );
+}
+
 
 function KpiCard({ label, value }: { label: string; value: string }) {
   return (
@@ -466,7 +507,7 @@ function ToolbarSkeleton() {
       <div className="flex items-center gap-3">
         <div className="h-9 w-80 animate-pulse rounded-xl bg-gray-100" />
         <div className="h-9 w-40 animate-pulse rounded-xl bg-gray-100" />
-        <div className="h-9 w-24 animate-pulse rounded-xl bg-gray-100 ml-auto" />
+        <div className="ml-auto h-9 w-24 animate-pulse rounded-xl bg-gray-100" />
         <div className="h-9 w-24 animate-pulse rounded-xl bg-gray-100" />
       </div>
     </div>

@@ -138,7 +138,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 <div className="ml-6 space-y-1">
                   <NavItem href="/admin/setting/payment" label="Payment & Shipping" />
                   <NavItem href="/admin/setting/admin" label="Admin" />
-                  <NavItem href="/admin/setting/branding" label="Logo & Website name" />
+                  <NavItem href="/admin/setting/name" label="Logo & Website name" />
                 </div>
               )}
           </nav>

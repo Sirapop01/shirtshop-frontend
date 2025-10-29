@@ -1,9 +1,12 @@
+// src/app/admin/products/new/page.tsx
 "use client";
 
 import { useState, useEffect, FormEvent, ChangeEvent, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth } from "@/context/AuthContext";
 import Image from "next/image";
+import axios, { AxiosError } from "axios";
+import api from "@/lib/api"; // ✅ ใช้ axios instance ของเรา
+import { useAuth } from "@/context/AuthContext";
 
 // รายการสีและไซส์ทั้งหมดที่มีในร้าน
 const ALL_AVAILABLE_COLORS = [
@@ -19,6 +22,7 @@ const ALL_AVAILABLE_COLORS = [
   "Beige",
   "Dark Grey",
 ] as const;
+
 const ALL_AVAILABLE_SIZES = ["S", "M", "L", "XL", "XXL"] as const;
 
 /** Types ให้ตรงกับสเปค BE ล่าสุด */
@@ -35,18 +39,9 @@ type ProductRequest = {
   category: string;
   availableColors: string[];
   availableSizes: string[];
-  stockQuantity: number; // จะคำนวณจาก variantStocks
+  stockQuantity: number;     // จะคำนวณจาก variantStocks
   variantStocks: VariantStock[];
 };
-
-// helper: ป้องกัน res.json() พัง
-async function safeJson(res: Response) {
-  try {
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
 
 /** สร้าง/อัปเดต matrix (Map สี -> Map ไซส์ -> จำนวน) */
 function buildMatrix(colors: string[], sizes: string[]) {
@@ -58,6 +53,7 @@ function buildMatrix(colors: string[], sizes: string[]) {
   });
   return map;
 }
+
 function matrixToVariants(matrix: Map<string, Map<string, number>>): VariantStock[] {
   const out: VariantStock[] = [];
   for (const [color, row] of matrix.entries()) {
@@ -69,7 +65,7 @@ function matrixToVariants(matrix: Map<string, Map<string, number>>): VariantStoc
 }
 
 export default function NewProductPage() {
-  const { isAdmin, token, user } = useAuth();
+  const { isAdmin, user } = useAuth();
   const router = useRouter();
 
   // State สำหรับจัดการ Loading และการป้องกันหน้า
@@ -81,7 +77,7 @@ export default function NewProductPage() {
   const [price, setPrice] = useState("");
   const [category, setCategory] = useState("T-Shirts");
 
-  // ปรับจากของเดิม: ใช้ availableColors/Sizes + stockMatrix แทน stockQuantity เดี่ยว
+  // ปรับ: ใช้ availableColors/Sizes + stockMatrix แทน stockQuantity เดี่ยว
   const [selectedColors, setSelectedColors] = useState<string[]>([]);
   const [selectedSizes, setSelectedSizes] = useState<string[]>([]);
   const [stockMatrix, setStockMatrix] = useState<Map<string, Map<string, number>>>(
@@ -117,19 +113,14 @@ export default function NewProductPage() {
       URL.createObjectURL(file)
     );
     setImagePreviews(newImageUrls);
-
-    // Cleanup: ล้าง URL เก่าเพื่อกัน memory leak
     return () => newImageUrls.forEach((url) => URL.revokeObjectURL(url));
   }, [images]);
 
-  // เมื่อเซ็ตสี/ไซส์ใหม่ ให้ sync โครงตาราง
+  // เมื่อเซ็ตสี/ไซส์ใหม่ ให้ sync โครงตาราง (พยายามคงค่าที่เคยกรอกไว้)
   useEffect(() => {
     setStockMatrix((prev) => {
-      // แปลงค่าจาก prev เก็บไว้ก่อน
       const prevVariants = matrixToVariants(prev);
-      // สร้าง matrix ตามรายการปัจจุบัน
       const next = buildMatrix(selectedColors, selectedSizes);
-      // ใส่ค่าที่เคยกรอกไว้กลับไป
       prevVariants.forEach(({ color, size, quantity }) => {
         if (next.has(color) && next.get(color)!.has(size)) {
           next.get(color)!.set(size, quantity);
@@ -197,11 +188,6 @@ export default function NewProductPage() {
     setError("");
     setSuccessMessage("");
 
-    if (!token) {
-      setError("Authentication error. Please login again.");
-      return;
-    }
-
     if (!name.trim()) {
       setError("Please provide product name.");
       return;
@@ -230,12 +216,12 @@ export default function NewProductPage() {
       variantStocks: variants,
     };
 
+    // ประกอบ multipart/form-data
     const formData = new FormData();
     formData.append(
       "product",
       new Blob([JSON.stringify(productData)], { type: "application/json" })
     );
-
     if (images) {
       for (let i = 0; i < images.length; i++) {
         formData.append("images", images[i]);
@@ -243,16 +229,8 @@ export default function NewProductPage() {
     }
 
     try {
-      const res = await fetch("http://localhost:8080/api/products", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const errorData = await safeJson(res);
-        throw new Error(errorData?.message || `Error: ${res.statusText}`);
-      }
+      // ✅ ใช้ axios instance จาก lib/api.ts
+      await api.post("/api/products", formData); // ไม่ต้องตั้ง Content-Type เอง
 
       setSuccessMessage("Product created successfully!");
 
@@ -267,13 +245,20 @@ export default function NewProductPage() {
       setStockMatrix(buildMatrix([], []));
 
       setImages(null);
+      setImagePreviews([]);
       const fileInput = document.querySelector(
         'input[type="file"]'
       ) as HTMLInputElement | null;
       if (fileInput) fileInput.value = "";
-      setImagePreviews([]);
-    } catch (err: any) {
-      setError(`Failed to create product: ${err.message}`);
+    } catch (err: unknown) {
+      let msg = "Failed to create product.";
+      if (axios.isAxiosError(err)) {
+        const ax = err as AxiosError<any>;
+        msg = ax.response?.data?.message || ax.response?.data?.error || ax.message || msg;
+      } else if (err instanceof Error) {
+        msg = err.message || msg;
+      }
+      setError(msg);
     } finally {
       setIsSubmitting(false);
     }
@@ -287,9 +272,7 @@ export default function NewProductPage() {
     );
   }
 
-  if (!isAdmin) {
-    return null;
-  }
+  if (!isAdmin) return null;
 
   return (
     <div className="bg-gray-50 min-h-screen">
@@ -373,12 +356,9 @@ export default function NewProductPage() {
               <label className="block text-gray-700 font-medium mb-1">
                 Available Colors
               </label>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-2">
+              <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3">
                 {ALL_AVAILABLE_COLORS.map((color) => (
-                  <label
-                    key={color}
-                    className="flex items-center space-x-2 cursor-pointer"
-                  >
+                  <label key={color} className="flex cursor-pointer items-center space-x-2">
                     <input
                       type="checkbox"
                       checked={selectedColors.includes(color)}
@@ -395,12 +375,9 @@ export default function NewProductPage() {
               <label className="block text-gray-700 font-medium mb-1">
                 Available Sizes
               </label>
-              <div className="grid grid-cols-5 gap-3 mt-2">
+              <div className="mt-2 grid grid-cols-5 gap-3">
                 {ALL_AVAILABLE_SIZES.map((size) => (
-                  <label
-                    key={size}
-                    className="flex items-center space-x-2 cursor-pointer"
-                  >
+                  <label key={size} className="flex cursor-pointer items-center space-x-2">
                     <input
                       type="checkbox"
                       checked={selectedSizes.includes(size)}
@@ -416,13 +393,10 @@ export default function NewProductPage() {
 
           {/* ตารางคงคลัง: สี × ไซส์ */}
           <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-gray-700 font-bold">
-                Stock by Color × Size
-              </label>
+            <div className="mb-2 flex items-center justify-between">
+              <label className="block font-bold text-gray-700">Stock by Color × Size</label>
               <div className="text-sm text-gray-600">
-                Total:{" "}
-                <span className="font-semibold">{grandTotal.toLocaleString()}</span>
+                Total: <span className="font-semibold">{grandTotal.toLocaleString()}</span>
               </div>
             </div>
 
@@ -430,31 +404,31 @@ export default function NewProductPage() {
               <table className="min-w-[600px] w-full border text-sm">
                 <thead className="bg-gray-100">
                   <tr>
-                    <th className="p-2 border">Color \\ Size</th>
+                    <th className="border p-2">Color \\ Size</th>
                     {selectedSizes.map((s) => (
-                      <th key={s} className="p-2 border text-center">
+                      <th key={s} className="border p-2 text-center">
                         {s}
                       </th>
                     ))}
-                    <th className="p-2 border text-center">Row Total</th>
+                    <th className="border p-2 text-center">Row Total</th>
                   </tr>
                 </thead>
                 <tbody>
                   {selectedColors.map((c) => (
                     <tr key={c} className="odd:bg-white even:bg-gray-50">
-                      <td className="p-2 border font-medium">{c}</td>
+                      <td className="border p-2 font-medium">{c}</td>
                       {selectedSizes.map((s) => (
-                        <td key={s} className="p-2 border">
+                        <td key={s} className="border p-2">
                           <input
                             type="number"
                             min={0}
                             value={stockMatrix.get(c)?.get(s) ?? 0}
                             onChange={(e) => handleQtyChange(c, s, e.target.value)}
-                            className="w-20 p-1 border rounded-md"
+                            className="w-20 rounded-md border p-1"
                           />
                         </td>
                       ))}
-                      <td className="p-2 border text-center font-medium">
+                      <td className="border p-2 text-center font-medium">
                         {totalByColor[c]?.toLocaleString() ?? 0}
                       </td>
                     </tr>
@@ -462,15 +436,13 @@ export default function NewProductPage() {
                 </tbody>
                 <tfoot>
                   <tr className="bg-gray-100">
-                    <th className="p-2 border text-right">Col Total</th>
+                    <th className="border p-2 text-right">Col Total</th>
                     {selectedSizes.map((s) => (
-                      <th key={s} className="p-2 border text-center">
+                      <th key={s} className="border p-2 text-center">
                         {totalBySize[s]?.toLocaleString() ?? 0}
                       </th>
                     ))}
-                    <th className="p-2 border text-center">
-                      {grandTotal.toLocaleString()}
-                    </th>
+                    <th className="border p-2 text-center">{grandTotal.toLocaleString()}</th>
                   </tr>
                 </tfoot>
               </table>
@@ -479,29 +451,22 @@ export default function NewProductPage() {
 
           {/* รูปสินค้า */}
           <div>
-            <label className="block text-gray-700 font-medium mb-1">
-              Product Images
-            </label>
+            <label className="block text-gray-700 font-medium mb-1">Product Images</label>
             <input
               type="file"
               onChange={handleImageChange}
               multiple
               accept="image/*"
-              className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-black file:text-white hover:file:bg-gray-800"
+              className="w-full text-sm text-gray-500 file:mr-4 file:rounded-full file:border-0 file:bg-black file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-gray-800"
             />
           </div>
 
           {imagePreviews.length > 0 && (
             <div>
-              <label className="block text-gray-700 font-medium mb-1">
-                Image Preview
-              </label>
-              <div className="mt-2 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-4">
+              <label className="block text-gray-700 font-medium mb-1">Image Preview</label>
+              <div className="mt-2 grid grid-cols-3 gap-4 sm:grid-cols-4 md:grid-cols-5">
                 {imagePreviews.map((previewUrl, index) => (
-                  <div
-                    key={index}
-                    className="relative w-full aspect-square rounded-lg overflow-hidden border"
-                  >
+                  <div key={index} className="relative aspect-square w-full overflow-hidden rounded-lg border">
                     <Image
                       src={previewUrl}
                       alt={`Preview ${index + 1}`}
@@ -517,19 +482,19 @@ export default function NewProductPage() {
 
           <div className="pt-2">
             {successMessage && (
-              <p className="mb-4 text-center text-green-600 bg-green-50 p-3 rounded-md">
+              <p className="mb-4 rounded-md bg-green-50 p-3 text-center text-green-600">
                 {successMessage}
               </p>
             )}
             {error && (
-              <p className="mb-4 text-center text-red-600 bg-red-50 p-3 rounded-md">
+              <p className="mb-4 rounded-md bg-red-50 p-3 text-center text-red-600">
                 {error}
               </p>
             )}
             <button
               type="submit"
               disabled={isSubmitting}
-              className="w-full px-6 py-3 bg-black text-white rounded-lg font-bold text-lg hover:bg-gray-800 transition-colors disabled:opacity-60"
+              className="w-full rounded-lg bg-black px-6 py-3 text-lg font-bold text-white transition-colors hover:bg-gray-800 disabled:opacity-60"
             >
               {isSubmitting ? "Creating..." : "Create Product"}
             </button>
