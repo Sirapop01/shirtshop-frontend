@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import api from "@/lib/api";
 
 /* ---------- Types ---------- */
 type SummaryDTO = {
@@ -39,93 +40,82 @@ type LowStockItem = { id: string; name: string; sku?: string; stock: number };
 /* ---------- Date range helpers ---------- */
 type RangeKey = "today" | "7d" | "30d" | "ytd";
 function getRange(key: RangeKey) {
-  // ใช้เวลาเครื่องผู้ใช้ (local time) ไม่ใช่ UTC
   const now = new Date();
 
-  // end = 23:59:59.999 ของ "วันนี้" (local)
   const end = new Date(now);
   end.setHours(23, 59, 59, 999);
 
-  // start = 00:00:00.000 ของวันแรกในช่วง (local)
   const start = new Date(now);
   start.setHours(0, 0, 0, 0);
 
   if (key === "7d") {
-    start.setDate(end.getDate() - 6);      // รวมวันนี้
+    start.setDate(end.getDate() - 6);
   } else if (key === "30d") {
-    start.setDate(end.getDate() - 29);     // รวมวันนี้
+    start.setDate(end.getDate() - 29);
   } else if (key === "ytd") {
     start.setMonth(0, 1);
     start.setHours(0, 0, 0, 0);
   }
 
-  // เก็บทั้ง ISO (ยังใช้กับ analytics) และ millis (ไว้กรอง Recent Orders)
   return {
     from: start.toISOString(),
     to: end.toISOString(),
     fromMs: +start,
     toMs: +end,
     label:
-      key === "today" ? "Today" :
-      key === "7d"    ? "Last 7 days" :
-      key === "30d"   ? "Last 30 days" :
-                        "Year to date",
+      key === "today"
+        ? "Today"
+        : key === "7d"
+        ? "Last 7 days"
+        : key === "30d"
+        ? "Last 30 days"
+        : "Year to date",
   };
 }
 
 /* ---------- Recent orders ---------- */
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8080";
-
 /**
  * ดึงรายการออเดอร์ล่าสุด “ทุกสถานะ” แล้วกรองช่วงเวลา (UTC) จากปุ่ม Today/7d/30d/YTD
  * - ดึงเยอะหน่อย (size=64) แล้ว filter/sort/slice ให้เหลือ 8 แถว
  */
 async function fetchRecentOrdersAdmin(
-  withAuth: (h?: HeadersInit) => HeadersInit,
   range?: { from: string; to: string; fromMs?: number; toMs?: number }
 ) {
   const cands = [
-    `${API_BASE}/api/admin/orders?size=64&page=0&sort=createdAt,DESC`,
-    `${API_BASE}/admin/orders?size=64&page=0&sort=createdAt,DESC`,
-    `${API_BASE}/api/admin/orders?size=64&page=0&sort=updatedAt,DESC`,
-    `${API_BASE}/admin/orders?size=64&page=0&sort=updatedAt,DESC`,
+    "/api/admin/orders?size=64&page=0&sort=createdAt,DESC",
+    "/admin/orders?size=64&page=0&sort=createdAt,DESC",
+    "/api/admin/orders?size=64&page=0&sort=updatedAt,DESC",
+    "/admin/orders?size=64&page=0&sort=updatedAt,DESC",
   ];
 
-  for (const url of cands) {
+  for (const path of cands) {
     try {
-      const r = await fetch(url, { headers: withAuth(), cache: "no-store" });
-      if (!r.ok) continue;
-
-      const body = await r.json();
-      const mapped = normalizeRecentOrders(body);
+      const r = await api.get(path, { headers: { "Cache-Control": "no-cache" } });
+      const mapped = normalizeRecentOrders(r.data);
       if (!mapped.length) continue;
 
       let rows = mapped;
 
-      // ✅ กรองด้วยช่วงเวลาท้องถิ่น (ถ้ามี)
       if (range?.fromMs != null && range?.toMs != null) {
         const start = range.fromMs;
         const end = range.toMs;
         rows = mapped.filter((o) => {
-          const t = Date.parse(o.createdAt); // ISO -> millis (UTC epoch)
-          // เปรียบเทียบกับขอบเขต "local day" ที่เราคำนวณแล้ว
+          const t = Date.parse(o.createdAt);
           return Number.isFinite(t) && t >= start && t <= end;
         });
       }
 
       rows.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
       return rows.slice(0, 8);
-    } catch {}
+    } catch {
+      /* try next candidate */
+    }
   }
   return [] as OrderItem[];
 }
 
 /** เติมชื่อ customer จาก /api/customers/{id} ให้รายการที่ยังไม่มีชื่อ */
-async function enrichCustomerNames(
-  orders: OrderItem[],
-  withAuth: (h?: HeadersInit) => HeadersInit
-): Promise<OrderItem[]> {
+async function enrichCustomerNames(orders: OrderItem[]): Promise<OrderItem[]> {
   const ids = Array.from(
     new Set(
       orders
@@ -141,12 +131,10 @@ async function enrichCustomerNames(
   await Promise.all(
     ids.map(async (id) => {
       try {
-        const res = await fetch(`${API_BASE}/api/customers/${id}`, {
-          headers: withAuth(),
-          cache: "no-store",
+        const res = await api.get(`/api/customers/${id}`, {
+          headers: { "Cache-Control": "no-cache" },
         });
-        if (!res.ok) return;
-        const u = await res.json();
+        const u = res.data;
 
         const fullName =
           (u.displayName as string | undefined)?.trim() ??
@@ -191,15 +179,6 @@ export default function AdminDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string>("");
 
-  const token =
-    typeof window !== "undefined"
-      ? localStorage.getItem("accessToken")
-      : null;
-  const withAuth = (headers: HeadersInit = {}) => ({
-    ...headers,
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  });
-
   useEffect(() => {
     let mounted = true;
 
@@ -213,42 +192,51 @@ export default function AdminDashboardPage() {
           : `?from=${range.from}&to=${range.to}`;
 
       try {
-        const [sumRes, countRes, trendRes, catRes, topRes, lowRes] =
-          await Promise.all([
-            fetch(`${API_BASE}/admin/analytics/summary${qs}`, {
-              headers: withAuth(),
-              cache: "no-store",
-            }),
-            fetch(`${API_BASE}/api/customers/count`, {
-              headers: withAuth(),
-              cache: "no-store",
-            }),
-            fetch(`${API_BASE}/admin/analytics/sales/daily${qs}`, {
-              headers: withAuth(),
-              cache: "no-store",
-            }),
-            fetch(`${API_BASE}/admin/analytics/sales/by-category${qs}`, {
-              headers: withAuth(),
-              cache: "no-store",
-            }),
-            fetch(`${API_BASE}/admin/analytics/top-products${qs}`, {
-              headers: withAuth(),
-              cache: "no-store",
-            }),
-            fetch(`${API_BASE}/api/inventory/low-stock?limit=6`, {
-              headers: withAuth(),
-              cache: "no-store",
-            }),
-          ]);
-
-        // ---- Recent orders: ดึง + กรองช่วงเวลา + เติมชื่อ ----
-        const recentRaw = await fetchRecentOrdersAdmin(withAuth, {
-          from: range.from,
-          to: range.to,
-          fromMs: range.fromMs,
-          toMs: range.toMs,
-        });
-        const recent = await enrichCustomerNames(recentRaw, withAuth);
+        const [
+          sumRes,
+          countRes,
+          trendRes,
+          catRes,
+          topRes,
+          lowRes,
+          recentRaw,
+        ] = await Promise.all([
+          api.get(`/admin/analytics/summary${qs}`, {
+            headers: { "Cache-Control": "no-cache" },
+          }),
+          api
+            .get(`/api/customers/count`, {
+              headers: { "Cache-Control": "no-cache" },
+            })
+            .catch(() => null),
+          api
+            .get(`/admin/analytics/sales/daily${qs}`, {
+              headers: { "Cache-Control": "no-cache" },
+            })
+            .catch(() => null),
+          api
+            .get(`/admin/analytics/sales/by-category${qs}`, {
+              headers: { "Cache-Control": "no-cache" },
+            })
+            .catch(() => null),
+          api
+            .get(`/admin/analytics/top-products${qs}`, {
+              headers: { "Cache-Control": "no-cache" },
+            })
+            .catch(() => null),
+          api
+            .get(`/api/inventory/low-stock`, {
+              params: { limit: 6 },
+              headers: { "Cache-Control": "no-cache" },
+            })
+            .catch(() => null),
+          fetchRecentOrdersAdmin({
+            from: range.from,
+            to: range.to,
+            fromMs: range.fromMs,
+            toMs: range.toMs,
+          }),
+        ]);
 
         // ค่า default กัน None
         const _summary: SummaryDTO = {
@@ -259,54 +247,52 @@ export default function AdminDashboardPage() {
           ordersRangeTotal: 0,
         };
 
-        if (sumRes.ok) {
+        if (sumRes?.data) {
           const s: {
             revenue?: number;
             orders?: number;
             averageOrderValue?: number;
-          } = await sumRes.json();
+          } = sumRes.data;
           _summary.revenueRangeTotal = Number(s.revenue ?? 0);
           _summary.ordersRangeTotal = Number(s.orders ?? 0);
         }
 
-        if (countRes.ok) {
-          const obj = (await countRes.json()) as { customersTotal?: number };
-          if (typeof obj?.customersTotal === "number") {
-            _summary.customersTotal = obj.customersTotal;
+        // ลูกค้ารวม: ใช้ /count ถ้าไม่มีก็ fallback ไป get all แล้ว length
+        if (countRes?.data && typeof countRes.data?.customersTotal === "number") {
+          _summary.customersTotal = countRes.data.customersTotal;
+        } else {
+          try {
+            const rc = await api.get(`/api/customers`, {
+              headers: { "Cache-Control": "no-cache" },
+            });
+            const arr: unknown[] = rc.data;
+            _summary.customersTotal = Array.isArray(arr) ? arr.length : 0;
+          } catch {
+            /* ignore */
           }
         }
-        if (_summary.customersTotal == null) {
-          try {
-            const rc = await fetch(`${API_BASE}/api/customers`, {
-              headers: withAuth(),
-              cache: "no-store",
-            });
-            if (rc.ok) {
-              const arr: unknown[] = await rc.json();
-              _summary.customersTotal = Array.isArray(arr) ? arr.length : 0;
-            }
-          } catch {}
-        }
 
-        // กราฟ/หมวด/ท็อป/สต็อก
-        const rawTrend = trendRes.ok ? await trendRes.json() : null;
+        const rawTrend = trendRes?.data ?? null;
         const _trend = normalizeRevenueDaily(rawTrend, rangeKey);
 
-        const _cats = catRes.ok
-          ? ((await catRes.json()) as CategoryBreakdown[])
-          : null;
-        const _tops = topRes.ok ? ((await topRes.json()) as TopProduct[]) : null;
-        const _low = lowRes.ok
-          ? ((await lowRes.json()) as LowStockItem[])
+        const _cats = catRes?.data
+          ? ((catRes.data as CategoryBreakdown[]) ?? [])
+          : [];
+        const _tops = topRes?.data ? ((topRes.data as TopProduct[]) ?? []) : [];
+        const _low = lowRes?.data ? ((lowRes.data as LowStockItem[]) ?? []) : [];
+
+        // ---- Recent orders: ดึง + กรองช่วงเวลา + เติมชื่อ ----
+        const recentList = Array.isArray(recentRaw)
+          ? await enrichCustomerNames(recentRaw)
           : [];
 
         if (!mounted) return;
         setSummary(_summary);
         setTrend(_trend.length ? _trend : genFakeTrend(rangeKey));
-        setByCategory(_cats ?? []);
-        setRecentOrders(recent ?? []);
-        setTopProducts(_tops ?? []);
-        setLowStock(_low ?? []);
+        setByCategory(_cats);
+        setRecentOrders(recentList);
+        setTopProducts(_tops);
+        setLowStock(_low);
       } catch (e: any) {
         if (!mounted) return;
         setErr(e?.message || "Load dashboard failed.");
@@ -319,8 +305,7 @@ export default function AdminDashboardPage() {
     return () => {
       mounted = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rangeKey, token]);
+  }, [rangeKey]);
 
   const aov = useMemo(() => {
     if (
@@ -396,9 +381,7 @@ export default function AdminDashboardPage() {
         <KpiCard
           label="Average Order Value"
           note={range.label}
-          value={
-            loading ? "…" : aov == null ? "None" : formatBaht(Number(aov))
-          }
+          value={loading ? "…" : aov == null ? "None" : formatBaht(Number(aov))}
         />
         <KpiCard
           label="Customers"
@@ -481,15 +464,12 @@ export default function AdminDashboardPage() {
               <h3 className="text-lg font-semibold text-gray-900">Low Stock</h3>
             </div>
 
-            {(!lowStock || lowStock.length === 0) ? (
+            {!lowStock?.length ? (
               <EmptyHint text="All stocks are healthy" />
             ) : (
               <ul className="mt-2 divide-y divide-gray-100">
                 {lowStock.map((i) => (
-                  <li
-                    key={i.id}
-                    className="flex items-center justify-between py-2"
-                  >
+                  <li key={i.id} className="flex items-center justify-between py-2">
                     <span className="truncate text-sm">
                       {i.name}
                       {i.sku ? ` • ${i.sku}` : ""}
@@ -591,39 +571,20 @@ function Sparkline({ data }: { data: DailyPoint[] }) {
   return (
     <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full">
       <rect x="0" y="0" width={width} height={height} className="fill-white" />
-      <line
-        x1="0"
-        y1={toY(minY)}
-        x2={width}
-        y2={toY(minY)}
-        className="stroke-gray-100"
-      />
-      <line
-        x1="0"
-        y1={toY(maxY)}
-        x2={width}
-        y2={toY(maxY)}
-        className="stroke-gray-100"
-      />
+      <line x1="0" y1={toY(minY)} x2={width} y2={toY(minY)} className="stroke-gray-100" />
+      <line x1="0" y1={toY(maxY)} x2={width} y2={toY(maxY)} className="stroke-gray-100" />
       <path
-        d={`${path} L ${toX(xs.length - 1)} ${toY(minY)} L ${toX(0)} ${toY(
-          minY
-        )} Z`}
+        d={`${path} L ${toX(xs.length - 1)} ${toY(minY)} L ${toX(0)} ${toY(minY)} Z`}
         className="fill-gray-100"
         opacity={0.6}
       />
       <path d={path} className="stroke-gray-900" fill="none" strokeWidth={2} />
-      <circle
-        cx={toX(xs.length - 1)}
-        cy={toY(last.value)}
-        r={3.5}
-        className="fill-gray-900"
-      />
+      <circle cx={toX(xs.length - 1)} cy={toY(last.value)} r={3.5} className="fill-gray-900" />
     </svg>
   );
 }
 
-/* ---------- Recent Orders table (สไตล์ตัวอย่าง) ---------- */
+/* ---------- Recent Orders table ---------- */
 function RecentOrdersPretty({
   items,
   loading,

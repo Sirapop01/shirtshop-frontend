@@ -77,6 +77,8 @@ api.interceptors.response.use(
 // ---- Tiny helper to build absolute URLs (useful for <img src=...>) ----
 export const buildUrl = (path = ""): string => {
   if (!path) return API_BASE;
+  // ถ้าเป็น absolute / data: / blob: ให้คืนค่าเดิมเลย ไม่ต้องต่อ BASE
+  if (/^(https?:|data:|blob:)/i.test(path)) return path;
   const normalized = path.startsWith("/") ? path : `/${path}`;
   return `${API_BASE}${normalized}`;
 };
