@@ -61,7 +61,6 @@ export async function getProducts(): Promise<Product[]> {
     const res = await fetch(api("/api/products"), { cache: "no-store" });
     if (!res.ok) throw new Error(`Failed to fetch products: ${res.status}`);
     const data = await res.json();
-    console.log(data);
     return Array.isArray(data) ? data.map(normalizeProduct) : [];
   } catch (err) {
     console.error("[getProducts] Error:", err);
