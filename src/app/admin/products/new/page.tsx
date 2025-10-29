@@ -39,7 +39,7 @@ type ProductRequest = {
   category: string;
   availableColors: string[];
   availableSizes: string[];
-  stockQuantity: number;     // จะคำนวณจาก variantStocks
+  stockQuantity: number; // จะคำนวณจาก variantStocks
   variantStocks: VariantStock[];
 };
 
@@ -277,7 +277,7 @@ export default function NewProductPage() {
       setSelectedSizes([]);
       setStockMatrix(buildMatrix([], []));
 
-      setImages(null);
+      setImages([]); // ✅ แก้จาก null → []
       setImagePreviews([]);
       const fileInput = document.querySelector(
         'input[type="file"]'
@@ -287,7 +287,11 @@ export default function NewProductPage() {
       let msg = "Failed to create product.";
       if (axios.isAxiosError(err)) {
         const ax = err as AxiosError<any>;
-        msg = ax.response?.data?.message || ax.response?.data?.error || ax.message || msg;
+        msg =
+          ax.response?.data?.message ||
+          ax.response?.data?.error ||
+          ax.message ||
+          msg;
       } else if (err instanceof Error) {
         msg = err.message || msg;
       }
