@@ -4,6 +4,21 @@
 import { useEffect, useMemo, useState } from "react";
 import api from "@/lib/api";
 
+/* ===== Chart.js ===== */
+import { Line } from "react-chartjs-2";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Tooltip,
+  Legend,
+  Filler,
+  ChartOptions,
+} from "chart.js";
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler);
+
 /* ---------- Types ---------- */
 type SummaryDTO = {
   revenueToday?: number | null;
@@ -58,7 +73,7 @@ function getRange(key: RangeKey) {
   }
 
   return {
-    from: start.toISOString(),
+    from: start.toISOString(), // ใช้ ISO สำหรับเรียก API/เปรียบเทียบแบบ ms
     to: end.toISOString(),
     fromMs: +start,
     toMs: +end,
@@ -74,10 +89,6 @@ function getRange(key: RangeKey) {
 }
 
 /* ---------- Recent orders ---------- */
-/**
- * ดึงรายการออเดอร์ล่าสุด “ทุกสถานะ” แล้วกรองช่วงเวลา (UTC) จากปุ่ม Today/7d/30d/YTD
- * - ดึงเยอะหน่อย (size=64) แล้ว filter/sort/slice ให้เหลือ 8 แถว
- */
 async function fetchRecentOrdersAdmin(
   range?: { from: string; to: string; fromMs?: number; toMs?: number }
 ) {
@@ -85,7 +96,7 @@ async function fetchRecentOrdersAdmin(
     "/api/admin/orders?size=64&page=0&sort=createdAt,DESC",
     "/admin/orders?size=64&page=0&sort=createdAt,DESC",
     "/api/admin/orders?size=64&page=0&sort=updatedAt,DESC",
-    "/admin/orders?size=64&page=0&sort=updatedAt,DESC",
+    "/api/admin/orders?size=64&page=0&sort=updatedAt,DESC",
   ];
 
   for (const path of cands) {
@@ -179,17 +190,108 @@ export default function AdminDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string>("");
 
+  /* ===== helper: ดึงออเดอร์ทั้งหมดในช่วงเวลา แล้วกรองเฉพาะ PAID ===== */
+  async function fetchPaidOrdersForTrend(fromIso: string, toIso: string) {
+    const cands = [
+      `/api/admin/orders?size=500&page=0&sort=createdAt,ASC`,
+      `/admin/orders?size=500&page=0&sort=createdAt,ASC`,
+    ];
+    for (const path of cands) {
+      try {
+        const r = await api.get(path, { headers: { "Cache-Control": "no-cache" } });
+        const rows = normalizeRecentOrders(r.data);
+        const fromMs = Date.parse(fromIso);
+        const toMs = Date.parse(toIso);
+        return rows.filter(
+          (o) =>
+            String(o.status).toUpperCase() === "PAID" &&
+            Number.isFinite(Date.parse(o.createdAt)) &&
+            Date.parse(o.createdAt) >= fromMs &&
+            Date.parse(o.createdAt) <= toMs
+        );
+      } catch {
+        /* try next */
+      }
+    }
+    return [] as OrderItem[];
+  }
+
+  /** รวมยอดสำหรับกราฟ:
+   * - 'today'  → รายชั่วโมง (00–23)
+   * - '7d/30d/ytd' → รายวัน + เติม 0 ให้วันที่ไม่มียอด (ใช้ Local date ป้องกัน off-by-one)
+   */
+  function aggregateOrdersToDaily(
+    orders: OrderItem[],
+    rangeKey: "today" | "7d" | "30d" | "ytd",
+    range?: { from: string; to: string }
+  ): DailyPoint[] {
+    if (rangeKey === "today") {
+      // ---------- รายชั่วโมง (วันนี้, local) ----------
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      const end = new Date();
+      end.setHours(23, 59, 59, 999);
+
+      const hourly: number[] = Array.from({ length: 24 }, () => 0);
+
+      for (const o of orders) {
+        const t = new Date(o.createdAt);
+        if (isNaN(+t)) continue;
+        if (t >= start && t <= end) {
+          const h = t.getHours(); // local hour
+          if (h >= 0 && h <= 23) hourly[h] += Number(o.total || 0);
+        }
+      }
+
+      const points: DailyPoint[] = [];
+      for (let h = 0; h < 24; h++) {
+        points.push({ date: `${String(h).padStart(2, "0")}:00`, value: Math.round(hourly[h]) });
+      }
+      return points;
+    }
+
+    // ---------- รายวัน (7ด/30ด/YTD) แบบ local + zero-fill ----------
+    const bucket = new Map<string, number>();
+    for (const o of orders) {
+      const d = new Date(o.createdAt);
+      if (isNaN(+d)) continue;
+      const key = ymdLocal(d); // ใช้ Local date
+      bucket.set(key, (bucket.get(key) ?? 0) + Number(o.total || 0));
+    }
+
+    if (range?.from && range?.to) {
+      const startIso = new Date(range.from);
+      const endIso = new Date(range.to);
+      const s = new Date(startIso.getFullYear(), startIso.getMonth(), startIso.getDate());
+      const e = new Date(endIso.getFullYear(), endIso.getMonth(), endIso.getDate());
+
+      const out: DailyPoint[] = [];
+      for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+        const key = ymdLocal(d);
+        out.push({ date: key, value: Math.round(bucket.get(key) ?? 0) });
+      }
+      return out;
+    }
+
+    return Array.from(bucket.entries())
+      .map(([date, value]) => ({ date, value }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  /* ===== useEffect: load ===== */
   useEffect(() => {
     let mounted = true;
+
+    const withParam = (qs: string, key: string, val: string) =>
+      qs ? `${qs}&${key}=${encodeURIComponent(val)}` : `?${key}=${encodeURIComponent(val)}`;
 
     async function load() {
       setLoading(true);
       setErr("");
 
-      const qs =
-        rangeKey === "today"
-          ? `?lastDays=0`
-          : `?from=${range.from}&to=${range.to}`;
+      const baseQs =
+        rangeKey === "today" ? `?lastDays=0` : `?from=${range.from}&to=${range.to}`;
+      const paidQs = withParam(baseQs, "statuses", "PAID");
 
       try {
         const [
@@ -201,44 +303,17 @@ export default function AdminDashboardPage() {
           lowRes,
           recentRaw,
         ] = await Promise.all([
-          api.get(`/admin/analytics/summary${qs}`, {
-            headers: { "Cache-Control": "no-cache" },
-          }),
-          api
-            .get(`/api/customers/count`, {
-              headers: { "Cache-Control": "no-cache" },
-            })
-            .catch(() => null),
-          api
-            .get(`/admin/analytics/sales/daily${qs}`, {
-              headers: { "Cache-Control": "no-cache" },
-            })
-            .catch(() => null),
-          api
-            .get(`/admin/analytics/sales/by-category${qs}`, {
-              headers: { "Cache-Control": "no-cache" },
-            })
-            .catch(() => null),
-          api
-            .get(`/admin/analytics/top-products${qs}`, {
-              headers: { "Cache-Control": "no-cache" },
-            })
-            .catch(() => null),
-          api
-            .get(`/api/inventory/low-stock`, {
-              params: { limit: 6 },
-              headers: { "Cache-Control": "no-cache" },
-            })
-            .catch(() => null),
-          fetchRecentOrdersAdmin({
-            from: range.from,
-            to: range.to,
-            fromMs: range.fromMs,
-            toMs: range.toMs,
-          }),
+          api.get(`/admin/analytics/summary${baseQs}`, { headers: { "Cache-Control": "no-cache" } }),
+          api.get(`/api/customers/count`, { headers: { "Cache-Control": "no-cache" } }).catch(() => null),
+          api.get(`/admin/analytics/sales/daily${paidQs}`, { headers: { "Cache-Control": "no-cache" } })
+             .catch(() => null),
+          api.get(`/admin/analytics/sales/by-category${baseQs}`, { headers: { "Cache-Control": "no-cache" } }).catch(() => null),
+          api.get(`/admin/analytics/top-products${baseQs}`, { headers: { "Cache-Control": "no-cache" } }).catch(() => null),
+          api.get(`/api/inventory/low-stock`, { params: { limit: 6 }, headers: { "Cache-Control": "no-cache" } }).catch(() => null),
+          fetchRecentOrdersAdmin({ from: range.from, to: range.to, fromMs: range.fromMs, toMs: range.toMs }),
         ]);
 
-        // ค่า default กัน None
+        // ---- summary ----
         const _summary: SummaryDTO = {
           revenueToday: 0,
           totalSalesToday: 0,
@@ -246,49 +321,38 @@ export default function AdminDashboardPage() {
           revenueRangeTotal: 0,
           ordersRangeTotal: 0,
         };
-
         if (sumRes?.data) {
-          const s: {
-            revenue?: number;
-            orders?: number;
-            averageOrderValue?: number;
-          } = sumRes.data;
+          const s = sumRes.data as any;
           _summary.revenueRangeTotal = Number(s.revenue ?? 0);
           _summary.ordersRangeTotal = Number(s.orders ?? 0);
         }
-
-        // ลูกค้ารวม: ใช้ /count ถ้าไม่มีก็ fallback ไป get all แล้ว length
         if (countRes?.data && typeof countRes.data?.customersTotal === "number") {
           _summary.customersTotal = countRes.data.customersTotal;
         } else {
           try {
-            const rc = await api.get(`/api/customers`, {
-              headers: { "Cache-Control": "no-cache" },
-            });
-            const arr: unknown[] = rc.data;
-            _summary.customersTotal = Array.isArray(arr) ? arr.length : 0;
-          } catch {
-            /* ignore */
-          }
+            const rc = await api.get(`/api/customers`, { headers: { "Cache-Control": "no-cache" } });
+            _summary.customersTotal = Array.isArray(rc.data) ? rc.data.length : 0;
+          } catch {}
         }
 
-        const rawTrend = trendRes?.data ?? null;
-        const _trend = normalizeRevenueDaily(rawTrend, rangeKey);
+        // ---- trend ----
+        let trendPoints: DailyPoint[] = [];
+        if (trendRes?.data) {
+          trendPoints = normalizeRevenueDaily(trendRes.data, rangeKey);
+        }
+        if (!trendRes?.data || trendPoints.length === 0) {
+          const paidOrders = await fetchPaidOrdersForTrend(range.from, range.to);
+          trendPoints = aggregateOrdersToDaily(paidOrders, rangeKey, { from: range.from, to: range.to });
+        }
 
-        const _cats = catRes?.data
-          ? ((catRes.data as CategoryBreakdown[]) ?? [])
-          : [];
+        const _cats = catRes?.data ? ((catRes.data as CategoryBreakdown[]) ?? []) : [];
         const _tops = topRes?.data ? ((topRes.data as TopProduct[]) ?? []) : [];
-        const _low = lowRes?.data ? ((lowRes.data as LowStockItem[]) ?? []) : [];
-
-        // ---- Recent orders: ดึง + กรองช่วงเวลา + เติมชื่อ ----
-        const recentList = Array.isArray(recentRaw)
-          ? await enrichCustomerNames(recentRaw)
-          : [];
+        const _low  = lowRes?.data ? ((lowRes.data as LowStockItem[]) ?? []) : [];
+        const recentList = Array.isArray(recentRaw) ? await enrichCustomerNames(recentRaw) : [];
 
         if (!mounted) return;
         setSummary(_summary);
-        setTrend(_trend.length ? _trend : genFakeTrend(rangeKey));
+        setTrend(trendPoints);
         setByCategory(_cats);
         setRecentOrders(recentList);
         setTopProducts(_tops);
@@ -399,9 +463,9 @@ export default function AdminDashboardPage() {
       {/* Trend + Category */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm lg:col-span-2">
-          <SectionHead title="Revenue Trend" subtitle={range.label} />
-          <div className="mt-2 h-44">
-            <Sparkline data={trend ?? []} />
+          <SectionHead title="Revenue Trend" subtitle={`${range.label} · PAID only`} />
+          <div className="mt-2 h-56">
+            <RevenueChart data={trend ?? []} />
           </div>
         </div>
 
@@ -541,47 +605,59 @@ function EmptyHint({ text }: { text: string }) {
   );
 }
 
-/** mini sparkline chart (pure SVG, no libs) */
-function Sparkline({ data }: { data: DailyPoint[] }) {
-  if (!data.length) return <EmptyHint text="No data" />;
+/* ====== Revenue Chart (Chart.js) ====== */
+function RevenueChart({ data }: { data: DailyPoint[] }) {
+  if (!data || data.length === 0) {
+    return <EmptyHint text="No data" />;
+  }
 
-  const width = 700;
-  const height = 160;
-  const pad = 6;
+  const labels = data.map((d) => d.date);
+  const values = data.map((d) => Number(d.value || 0));
 
-  const xs = data.map((d, i) => i);
-  const ys = data.map((d) => d.value);
-  const minY = Math.min(...ys, 0);
-  const maxY = Math.max(...ys, 1);
+  const dataset = {
+    label: "Revenue (PAID)",
+    data: values,
+    tension: 0.3,
+    fill: true,
+    borderWidth: 2,
+    pointRadius: values.length === 1 ? 4 : 2,
+    pointHoverRadius: 5,
+    borderColor: "rgba(17,24,39,1)",
+    backgroundColor: "rgba(17,24,39,0.08)",
+  };
 
-  const toX = (i: number) =>
-    pad + (i / Math.max(xs.length - 1, 1)) * (width - pad * 2);
-  const toY = (v: number) =>
-    pad + (1 - (v - minY) / Math.max(maxY - minY, 1)) * (height - pad * 2);
+  const options: ChartOptions<"line"> = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        mode: "index",
+        intersect: false,
+        callbacks: {
+          label: (ctx) => ` ${formatBaht(Number(ctx.parsed.y))}`,
+        },
+      },
+    },
+    interaction: { mode: "index", intersect: false },
+    scales: {
+      x: { grid: { display: false }, ticks: { maxTicksLimit: 10, autoSkip: true } },
+      y: {
+        beginAtZero: true,
+        grid: { color: "rgba(0,0,0,0.05)" },
+        ticks: {
+          callback: (v) =>
+            new Intl.NumberFormat("th-TH", {
+              style: "currency",
+              currency: "THB",
+              maximumFractionDigits: 0,
+            }).format(Number(v)),
+        },
+      },
+    },
+  };
 
-  const path = data
-    .map(
-      (d, i) =>
-        `${i === 0 ? "M" : "L"} ${toX(i).toFixed(2)} ${toY(d.value).toFixed(2)}`
-    )
-    .join(" ");
-
-  const last = data[data.length - 1];
-
-  return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full">
-      <rect x="0" y="0" width={width} height={height} className="fill-white" />
-      <line x1="0" y1={toY(minY)} x2={width} y2={toY(minY)} className="stroke-gray-100" />
-      <line x1="0" y1={toY(maxY)} x2={width} y2={toY(maxY)} className="stroke-gray-100" />
-      <path
-        d={`${path} L ${toX(xs.length - 1)} ${toY(minY)} L ${toX(0)} ${toY(minY)} Z`}
-        className="fill-gray-100"
-        opacity={0.6}
-      />
-      <path d={path} className="stroke-gray-900" fill="none" strokeWidth={2} />
-      <circle cx={toX(xs.length - 1)} cy={toY(last.value)} r={3.5} className="fill-gray-900" />
-    </svg>
-  );
+  return <Line data={{ labels, datasets: [dataset] }} options={options} />;
 }
 
 /* ---------- Recent Orders table ---------- */
@@ -670,6 +746,26 @@ function toBadge(status: OrderItem["status"]): { label: string; cls: string } {
 }
 
 /* ---------- Utils ---------- */
+
+/* ===== Local date helpers (แก้ off-by-one จาก UTC ISO) ===== */
+function pad2(n: number) { return n < 10 ? `0${n}` : String(n); }
+
+/** คืนค่ารูปแบบ YYYY-MM-DD จาก Date (แบบ local time) */
+function ymdLocal(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+/** พยายามแปลง input → YYYY-MM-DD แบบ local ถ้าอ่านไม่ได้ คืน null */
+function toYmdLocal(input: any): string | null {
+  if (typeof input === "string") {
+    const m = input.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (m) return m[1];
+  }
+  const d = new Date(input);
+  if (!isNaN(+d)) return ymdLocal(d);
+  return null;
+}
+
 function formatBaht(v: number | string | null | undefined) {
   const n = Number(v ?? 0);
   return new Intl.NumberFormat("th-TH", {
@@ -684,55 +780,74 @@ function barWidthPercent(value: number, arr?: CategoryBreakdown[] | null) {
   return Math.round((value / max) * 100);
 }
 
-/** แปลงผลลัพธ์ "ยอดขายรายวัน" จาก BE ให้เป็น DailyPoint[] */
+/** แปลงผลลัพธ์ "ยอดขายรายวัน" ให้เป็น DailyPoint[] (ใช้ Local date) */
 function normalizeRevenueDaily(
   raw: any,
   rangeKey: "today" | "7d" | "30d" | "ytd"
 ): DailyPoint[] {
   if (!raw) return [];
 
-  const arr: any[] = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : [];
-  if (!arr.length) return [];
+  // กรณี 1: เป็น aggregated แล้ว
+  const arrAgg: any[] = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : [];
+  const looksAggregated =
+    arrAgg.length > 0 &&
+    (("date" in arrAgg[0]) || ("_id" in arrAgg[0]) || ("day" in arrAgg[0]) || ("key" in arrAgg[0])) &&
+    ("revenue" in arrAgg[0] || "total" in arrAgg[0] || "sum" in arrAgg[0] || "value" in arrAgg[0]);
 
-  const pickDate = (o: any) =>
-    o?.date ?? o?._id ?? o?.day ?? o?.key ?? (typeof o?.d === "string" ? o.d : undefined);
+  if (looksAggregated) {
+    const pickDate = (o: any) =>
+      o?.date ?? o?._id ?? o?.day ?? o?.key ?? (typeof o?.d === "string" ? o.d : undefined);
+    const pickValue = (o: any) => o?.revenue ?? o?.total ?? o?.sum ?? o?.value ?? 0;
 
-  const pickValue = (o: any) => o?.revenue ?? o?.total ?? o?.sum ?? o?.value ?? 0;
+    const mapped: DailyPoint[] = arrAgg
+      .map((o) => {
+        const dRaw = pickDate(o);
+        const vRaw = pickValue(o);
+        if (dRaw == null) return null;
 
-  const mapped: DailyPoint[] = arr
-    .map((o) => {
-      const dRaw = pickDate(o);
-      const vRaw = pickValue(o);
-      if (dRaw == null) return null;
+        const dLocal = toYmdLocal(dRaw);
+        if (!dLocal) return null;
 
-      let dIso: string;
-      try {
-        const d = new Date(dRaw);
-        if (!isNaN(+d)) {
-          dIso = d.toISOString().slice(0, 10);
-        } else if (typeof dRaw === "string") {
-          dIso = dRaw.replace(/\//g, "-").slice(0, 10);
-        } else {
-          return null;
-        }
-      } catch {
-        return null;
-      }
+        const val = Number(vRaw ?? 0);
+        return { date: dLocal, value: Number.isFinite(val) ? val : 0 };
+      })
+      .filter(Boolean) as DailyPoint[];
 
-      const val = Number(vRaw ?? 0);
-      return { date: dIso, value: Number.isFinite(val) ? val : 0 };
-    })
-    .filter(Boolean) as DailyPoint[];
-
-  mapped.sort((a, b) => a.date.localeCompare(b.date));
-
-  if (rangeKey === "today" && mapped.length > 1) {
-    return [mapped[mapped.length - 1]];
+    mapped.sort((a, b) => a.date.localeCompare(b.date));
+    if (rangeKey === "today" && mapped.length > 1) return [mapped[mapped.length - 1]];
+    return mapped;
   }
+
+  // กรณี 2: เป็นลิสต์ออเดอร์ → filter เฉพาะ PAID แล้ว group by day (local)
+  const arrOrders: any[] = Array.isArray(raw) ? raw : Array.isArray(raw?.content) ? raw.content : [];
+  if (!arrOrders.length) return [];
+
+  const normStatus = (s: any) => {
+    const x = String(s ?? "").toUpperCase();
+    if (x === "CANCELLED") return "CANCELED";
+    if (x === "PENDING") return "PENDING_PAYMENT";
+    return x;
+  };
+
+  const buckets = new Map<string, number>();
+  for (const o of arrOrders) {
+    const status = normStatus(o?.status ?? o?.orderStatus ?? o?.state);
+    if (status !== "PAID") continue;
+    const key = toYmdLocal(o?.createdAt ?? o?.created ?? o?.createdDate ?? Date.now());
+    if (!key) continue;
+    const amount = Number(o?.total ?? o?.grandTotal ?? o?.amount ?? 0) || 0;
+    buckets.set(key, (buckets.get(key) ?? 0) + amount);
+  }
+
+  const mapped = Array.from(buckets.entries())
+    .map(([date, value]) => ({ date, value }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  if (rangeKey === "today" && mapped.length > 1) return [mapped[mapped.length - 1]];
   return mapped;
 }
 
-/** สร้างข้อมูลปลอมสำหรับกราฟ เมื่อ BE ยังไม่พร้อม */
+/** สร้างข้อมูลปลอมสำหรับกราฟ (ใช้ local) */
 function genFakeTrend(key: RangeKey): DailyPoint[] {
   const len =
     key === "today" ? 1 : key === "7d" ? 7 : key === "30d" ? 30 : daysSinceJan1();
@@ -744,7 +859,7 @@ function genFakeTrend(key: RangeKey): DailyPoint[] {
     d.setDate(d.getDate() - i);
     const noise = (Math.sin((i / 3) * Math.PI) + Math.random() - 0.4) * 2500;
     base = Math.max(2000, base + noise);
-    out.push({ date: d.toISOString().slice(0, 10), value: Math.round(base) });
+    out.push({ date: ymdLocal(d), value: Math.round(base) });
   }
   return out;
 }
