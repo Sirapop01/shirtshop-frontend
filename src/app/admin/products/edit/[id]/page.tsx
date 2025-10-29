@@ -1,9 +1,12 @@
+// src/app/admin/products/[id]/page.tsx
 "use client";
 
 import { useState, useEffect, FormEvent, ChangeEvent, useMemo } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import Image from "next/image";
+import api from "@/lib/api";              // ✅ ใช้ axios instance (baseURL จาก NEXT_PUBLIC_API_BASE)
+import axios, { AxiosError } from "axios";
 
 /** --- ปรับตามร้านของคุณ --- */
 const ALL_AVAILABLE_COLORS = [
@@ -60,15 +63,6 @@ type ProductRequest = {
   variantStocks: VariantStock[];
 };
 
-/** helper: ป้องกัน res.json() พัง */
-async function safeJson(res: Response) {
-  try {
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
-
 /** ตาราง matrix สำหรับคงคลังสี×ไซส์ ใช้ Map 2 ชั้นเพื่อแก้ค่าง่าย */
 function buildMatrix(
   colors: string[],
@@ -99,7 +93,7 @@ function matrixToVariants(matrix: Map<string, Map<string, number>>): VariantStoc
 }
 
 export default function EditProductPage() {
-  const { isAdmin, token, user } = useAuth();
+  const { isAdmin, user } = useAuth();
   const router = useRouter();
   const params = useParams();
   const productId = params?.id as string;
@@ -143,22 +137,15 @@ export default function EditProductPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin, user]);
 
-  /** โหลดสินค้า */
+  /** โหลดสินค้า (axios + interceptor แนบ token ให้เอง) */
   const fetchProduct = async () => {
     setIsLoading(true);
     setError("");
     try {
-      if (!token) throw new Error("Authentication error. Please login again.");
-
-      const res = await fetch(`http://localhost:8080/api/products/${productId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
+      const res = await api.get<ProductResponse>(`/api/products/${productId}`, {
+        headers: { "Cache-Control": "no-cache" },
       });
-      if (!res.ok) {
-        const err = await safeJson(res);
-        throw new Error(err?.message || `Failed to load product (${res.status})`);
-      }
-      const data = (await res.json()) as ProductResponse;
+      const data = res.data;
 
       setName(data.name ?? "");
       setDescription(data.description ?? "");
@@ -178,8 +165,15 @@ export default function EditProductPage() {
 
       setStockMatrix(buildMatrix(initColors, initSizes, data.variantStocks));
       setExistingImages(Array.isArray(data.images) ? data.images : []);
-    } catch (e: any) {
-      setError(e.message || "Unexpected error while loading product.");
+    } catch (e: unknown) {
+      let msg = "Unexpected error while loading product.";
+      if (axios.isAxiosError(e)) {
+        const ax = e as AxiosError<any>;
+        msg = ax.response?.data?.message || ax.response?.data?.error || ax.message || msg;
+      } else if (e instanceof Error) {
+        msg = e.message || msg;
+      }
+      setError(msg);
     } finally {
       setIsLoading(false);
     }
@@ -272,11 +266,6 @@ export default function EditProductPage() {
     setError("");
     setSuccessMessage("");
 
-    if (!token) {
-      setError("Authentication error. Please login again.");
-      return;
-    }
-
     if (!name.trim()) {
       setError("Please provide product name.");
       return;
@@ -285,7 +274,6 @@ export default function EditProductPage() {
       setError("Please provide a valid price.");
       return;
     }
-
     if (availableColors.length === 0 || availableSizes.length === 0) {
       setError("Please select at least one color and size.");
       return;
@@ -325,16 +313,7 @@ export default function EditProductPage() {
         );
       }
 
-      const res = await fetch(`http://localhost:8080/api/products/${productId}`, {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const err = await safeJson(res);
-        throw new Error(err?.message || `Update failed (${res.status})`);
-      }
+      await api.put(`/api/products/${productId}`, formData); // ✅ axios instance
 
       setSuccessMessage("Product updated successfully!");
       // refresh เพื่อสะท้อนของจริงจาก BE
@@ -347,8 +326,15 @@ export default function EditProductPage() {
       ) as HTMLInputElement | null;
       if (fileInput) fileInput.value = "";
       setMarkedForRemoval(new Set());
-    } catch (err: any) {
-      setError(`Failed to update product: ${err.message}`);
+    } catch (e: unknown) {
+      let msg = "Failed to update product.";
+      if (axios.isAxiosError(e)) {
+        const ax = e as AxiosError<any>;
+        msg = ax.response?.data?.message || ax.response?.data?.error || ax.message || msg;
+      } else if (e instanceof Error) {
+        msg = e.message || msg;
+      }
+      setError(msg);
     } finally {
       setIsSubmitting(false);
     }

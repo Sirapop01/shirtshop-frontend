@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import api from "@/lib/api";
+import axios, { AxiosError } from "axios";
 
 type CustomerItem = {
   id: string;
@@ -18,27 +20,25 @@ export default function CustomersPage() {
   const [err, setErr] = useState<string>("");
   const [q, setQ] = useState("");
 
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
-
-  const withAuth = (headers: HeadersInit = {}) => ({
-    ...headers,
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  });
-
   const load = async () => {
     setLoading(true);
     setErr("");
     try {
-      const res = await fetch("http://localhost:8080/api/customers", {
-        headers: withAuth(),
-        cache: "no-store",
+      // ✅ ใช้ axios instance จาก lib/api.ts (baseURL จาก NEXT_PUBLIC_API_BASE + แนบ token อัตโนมัติ)
+      const res = await api.get<CustomerItem[]>("/api/customers", {
+        // ถ้าอยากกัน cache ฝั่ง browser เพิ่ม header นี้ได้ (ไม่จำเป็นก็ลบออกได้)
+        headers: { "Cache-Control": "no-cache" },
       });
-      if (!res.ok) throw new Error(`Failed to load customers (${res.status})`);
-      const json: CustomerItem[] = await res.json();
-      setItems(json ?? []);
-    } catch (e: any) {
-      setErr(e?.message || "Failed to load customers");
+      setItems(res.data ?? []);
+    } catch (e: unknown) {
+      let msg = "Failed to load customers";
+      if (axios.isAxiosError(e)) {
+        const ax = e as AxiosError<any>;
+        msg = ax.response?.data?.message || ax.response?.data?.error || ax.message || msg;
+      } else if (e instanceof Error) {
+        msg = e.message || msg;
+      }
+      setErr(String(msg));
     } finally {
       setLoading(false);
     }
@@ -46,8 +46,7 @@ export default function CustomersPage() {
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, []);
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -80,15 +79,20 @@ export default function CustomersPage() {
     if (!ok) return;
 
     try {
-      const res = await fetch(`http://localhost:8080/api/customers/${user.id}`, {
-        method: "DELETE",
-        headers: withAuth(),
-      });
-      if (!res.ok) throw new Error(`Delete failed (${res.status})`);
+      // ✅ ใช้ api.delete แทน fetch + withAuth
+      const res = await api.delete(`/api/customers/${user.id}`);
+      if (res.status < 200 || res.status >= 300) throw new Error(`Delete failed (${res.status})`);
       setItems((prev) => prev.filter((x) => x.id !== user.id));
       setOpenMenuId(null);
-    } catch (e: any) {
-      alert(e?.message || "Delete failed");
+    } catch (e: unknown) {
+      let msg = "Delete failed";
+      if (axios.isAxiosError(e)) {
+        const ax = e as AxiosError<any>;
+        msg = ax.response?.data?.message || ax.response?.data?.error || ax.message || msg;
+      } else if (e instanceof Error) {
+        msg = e.message || msg;
+      }
+      alert(msg);
     }
   };
 
@@ -128,7 +132,6 @@ export default function CustomersPage() {
               <th className="px-4 py-3">Role</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Last Active</th>
-              {/* ✅ จัดหัวคอลัมน์ ACTION ชิดขวา */}
               <th className="px-4 py-3 text-right">Action</th>
             </tr>
           </thead>
@@ -167,7 +170,7 @@ export default function CustomersPage() {
                   <td className="px-4 py-3">
                     <StatusPill active={u.active} />
                   </td>
-                  <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                  <td className="whitespace-nowrap px-4 py-3 text-gray-600">
                     {u.lastActive ? new Date(u.lastActive).toLocaleString() : "-"}
                   </td>
 
@@ -186,7 +189,7 @@ export default function CustomersPage() {
                       </button>
                     </div>
 
-                    {/* ✅ เมนูชิดขวาตรงปุ่ม, รายการกว้างเท่ากันและจัดชิดซ้าย */}
+                    {/* ✅ เมนูชิดขวาตรงปุ่ม */}
                     {openMenuId === u.id && (
                       <div className="absolute right-4 top-full z-20 mt-2 w-44 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
                         <Link

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import api, { buildUrl } from "@/lib/api";
+import axios, { AxiosError } from "axios";
 
 type CustomerDetail = {
   id: string;
@@ -20,7 +22,9 @@ function InfoCard({ title, value }: { title: string; value: React.ReactNode }) {
   return (
     <div className="rounded-2xl border border-gray-200 bg-white/80 p-4 shadow-sm backdrop-blur-sm">
       <div className="text-xs tracking-wide text-gray-500">{title}</div>
-      <div className="mt-1.5 text-base font-medium text-gray-900">{value ?? "-"}</div>
+      <div className="mt-1.5 text-base font-medium text-gray-900">
+        {value ?? "-"}
+      </div>
     </div>
   );
 }
@@ -50,7 +54,6 @@ export default function CustomerProfilePage() {
   const params = useParams();
   const router = useRouter();
 
-  // handle case ที่ params อาจเป็น string[]
   const idParam = (params as Record<string, string | string[]>)?.id;
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
 
@@ -61,26 +64,27 @@ export default function CustomerProfilePage() {
   useEffect(() => {
     if (!id) return;
 
-    const token =
-      typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
-
     const fetchData = async () => {
       try {
         setLoading(true);
         setError("");
 
-        const res = await fetch(`http://localhost:8080/api/customers/${id}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-
-        if (!res.ok) {
-          throw new Error(`Failed to fetch user (${res.status})`);
+        // ✅ ใช้ axios instance จาก lib/api.ts
+        const res = await api.get<CustomerDetail>(`/api/customers/${id}`);
+        setData(res.data);
+      } catch (e: unknown) {
+        let msg = "Failed to fetch user";
+        if (axios.isAxiosError(e)) {
+          const ax = e as AxiosError<any>;
+          msg =
+            ax.response?.data?.message ||
+            ax.response?.data?.error ||
+            ax.message ||
+            msg;
+        } else if (e instanceof Error) {
+          msg = e.message || msg;
         }
-
-        const json: CustomerDetail = await res.json();
-        setData(json);
-      } catch (e: any) {
-        setError(e.message || "Failed to fetch user");
+        setError(String(msg));
         setData(null);
       } finally {
         setLoading(false);
@@ -109,9 +113,7 @@ export default function CustomerProfilePage() {
 
   if (!data)
     return (
-      <div className="mx-auto max-w-5xl p-6 text-gray-600">
-        No data found
-      </div>
+      <div className="mx-auto max-w-5xl p-6 text-gray-600">No data found</div>
     );
 
   const fullName =
@@ -123,6 +125,10 @@ export default function CustomerProfilePage() {
   const roleClasses = isAdmin
     ? "border-red-300 text-red-700 bg-red-50"
     : "border-blue-300 text-blue-700 bg-blue-50";
+
+  // ✅ กันเคส path relative จาก BE
+  const avatarSrc =
+    data.profileImageUrl ? buildUrl(data.profileImageUrl) : "/avatar-placeholder.png";
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6">
@@ -140,7 +146,11 @@ export default function CustomerProfilePage() {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             alt="avatar"
-            src={data.profileImageUrl || "/avatar-placeholder.png"}
+            src={avatarSrc}
+            onError={(e) => {
+              // ถ้ารูปเสีย ให้ fallback เป็น placeholder
+              (e.currentTarget as HTMLImageElement).src = "/avatar-placeholder.png";
+            }}
             className="h-[84px] w-[84px] rounded-full object-cover ring-2 ring-offset-2 ring-offset-white ring-gray-200"
           />
           <span

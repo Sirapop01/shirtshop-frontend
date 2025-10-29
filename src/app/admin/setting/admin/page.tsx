@@ -1,9 +1,12 @@
+// src/app/admin/admin-users/page.tsx  (หรือไฟล์ที่คุณใช้อยู่)
 "use client";
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import api from "@/lib/api";                 // ✅ ใช้ axios instance (มี baseURL จาก NEXT_PUBLIC_API_BASE)
+import axios, { AxiosError } from "axios";
 
-/* ===== Types (เหมือนหน้า Customers) ===== */
+/* ===== Types ===== */
 type AdminItem = {
   id: string;
   name: string;
@@ -20,41 +23,35 @@ export default function AdminUsersPage() {
   const [err, setErr] = useState<string>("");
   const [q, setQ] = useState("");
 
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
-
-  const withAuth = (headers: HeadersInit = {}) => ({
-    ...headers,
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  });
-
   useEffect(() => {
     const load = async () => {
       setLoading(true);
       setErr("");
       try {
-        // ✅ ดึงเฉพาะ ADMIN จาก BE
-        const res = await fetch(
-          "http://localhost:8080/api/customers?role=ADMIN",
-          { headers: withAuth(), cache: "no-store" }
-        );
-        if (!res.ok) throw new Error(`Failed to load admins (${res.status})`);
-        const json: AdminItem[] = await res.json();
-
-        // กันพลาด: ถ้า BE ยังไม่กรองให้
-        const adminsOnly = (json ?? []).filter(
+        // ✅ ดึงเฉพาะ ADMIN ผ่าน axios instance
+        const res = await api.get<AdminItem[]>("/api/customers", {
+          params: { role: "ADMIN" },
+          headers: { "Cache-Control": "no-cache" },
+        });
+        const adminsOnly = (res.data ?? []).filter(
           (u) => Array.isArray(u.roles) && u.roles.includes("ADMIN")
         );
         setItems(adminsOnly);
-      } catch (e: any) {
-        setErr(e?.message || "Failed to load admins");
+      } catch (e: unknown) {
+        let msg = "Failed to load admins";
+        if (axios.isAxiosError(e)) {
+          const ax = e as AxiosError<any>;
+          msg = ax.response?.data?.message || ax.response?.data?.error || ax.message || msg;
+        } else if (e instanceof Error) {
+          msg = e.message || msg;
+        }
+        setErr(msg);
       } finally {
         setLoading(false);
       }
     };
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+    void load();
+  }, []);
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -63,11 +60,11 @@ export default function AdminUsersPage() {
       (x) =>
         x.name?.toLowerCase().includes(s) ||
         x.email?.toLowerCase().includes(s) ||
-        "admin".includes(s) // เผื่อค้นหาคำว่า admin
+        "admin".includes(s)
     );
   }, [items, q]);
 
-  /* ===== Kebab menu (เหมือนหน้า Customers) ===== */
+  /* ===== Kebab menu ===== */
   const [openId, setOpenId] = useState<string | null>(null);
   const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
   useEffect(() => {
@@ -84,25 +81,28 @@ export default function AdminUsersPage() {
     const ok = window.confirm(`Delete "${user.name || user.email}" ?`);
     if (!ok) return;
     try {
-      const res = await fetch(`http://localhost:8080/api/customers/${user.id}`, {
-        method: "DELETE",
-        headers: withAuth(),
-      });
-      if (!res.ok) throw new Error(`Delete failed (${res.status})`);
+      await api.delete(`/api/customers/${user.id}`);
       setItems((prev) => prev.filter((x) => x.id !== user.id));
       setOpenId(null);
-    } catch (e: any) {
-      alert(e?.message || "Delete failed");
+    } catch (e: unknown) {
+      let msg = "Delete failed";
+      if (axios.isAxiosError(e)) {
+        const ax = e as AxiosError<any>;
+        msg = ax.response?.data?.message || ax.response?.data?.error || ax.message || msg;
+      } else if (e instanceof Error) {
+        msg = e.message || msg;
+      }
+      alert(msg);
     }
   };
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
-      {/* Header เหมือน Customers */}
+      {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">Admin users</h1>
-        <p className="text-sm text-gray-500">Only accounts with admin role</p>
+          <p className="text-sm text-gray-500">Only accounts with admin role</p>
         </div>
 
         <div className="relative w-full sm:w-80">
@@ -124,7 +124,7 @@ export default function AdminUsersPage() {
         </div>
       )}
 
-      {/* Table เหมือนหน้า Customers */}
+      {/* Table */}
       <div className="overflow-x-auto rounded-2xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full text-sm">
           <thead>
@@ -138,8 +138,8 @@ export default function AdminUsersPage() {
             </tr>
           </thead>
 
+            {/* ใช้ ref เพื่อปิดเมนูเมื่อคลิกนอกตาราง */}
           <tbody ref={tbodyRef}>
-            {/* skeleton */}
             {loading &&
               Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i} className="border-b border-gray-50">
@@ -172,11 +172,11 @@ export default function AdminUsersPage() {
                   <td className="px-4 py-3">
                     <StatusPill active={u.active} />
                   </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-gray-600">
+                  <td className="whitespace-nowrap px-4 py-3 text-gray-600">
                     {u.lastActive ? new Date(u.lastActive).toLocaleString() : "-"}
                   </td>
 
-                  {/* Action: ปุ่ม 3 จุด + เมนู เหมือน Customers และ “ชิดขอบขวา” */}
+                  {/* Action */}
                   <td className="relative px-4 py-3">
                     <div className="flex items-center justify-end">
                       <button
@@ -223,7 +223,7 @@ export default function AdminUsersPage() {
   );
 }
 
-/* ===== UI helpers (เหมือนหน้า Customers) ===== */
+/* ===== UI helpers ===== */
 
 function RoleBadge({ roles }: { roles: string[] }) {
   const isAdmin = Array.isArray(roles) && roles.includes("ADMIN");
