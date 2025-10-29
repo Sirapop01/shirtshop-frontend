@@ -201,33 +201,58 @@ export default function OrderDetailClient({ orderId }: { orderId: string }) {
   };
 
   if (loading) {
-    return <main className="mx-auto max-w-4xl px-4 md:px-6 py-8">กำลังโหลด...</main>;
+    return <main className="mx-auto max-w-5xl px-4 md:px-6 py-10 text-gray-600">กำลังโหลด...</main>;
   }
   if (!order) {
     return (
-      <main className="mx-auto max-w-4xl px-4 md:px-6 py-8">
+      <main className="mx-auto max-w-5xl px-4 md:px-6 py-10">
         ไม่พบคำสั่งซื้อ
       </main>
     );
   }
 
-  // ✅ แสดงเลขติดตามเฉพาะเมื่อสถานะเป็น PAID เท่านั้น
   const showTracking = order.status === "PAID" && !!order.trackingTag;
+  const timeWarn =
+    timeLeft > 0
+      ? timeLeft <= 60
+        ? "text-red-600"
+        : timeLeft <= 180
+        ? "text-orange-600"
+        : "text-gray-700"
+      : "text-gray-500";
 
   return (
-    <main className="mx-auto max-w-4xl px-4 md:px-6 py-8 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl md:text-3xl font-bold">Order #{order.id.slice(-8)}</h1>
-        <StatusBadge s={order.status as OrderStatus} />
-      </div>
+    <main className="mx-auto max-w-5xl px-4 md:px-6 py-8 space-y-6">
+      {/* ===== Summary Header ===== */}
+      <section className="rounded-2xl border border-gray-200 bg-white shadow-sm px-6 py-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <div className="text-xs text-gray-500">หมายเลขคำสั่งซื้อ</div>
+            <h1 className="text-xl md:text-2xl font-bold tracking-tight text-gray-900">
+              #{order.id.slice(-8)}
+            </h1>
+            <div className="mt-1 text-sm text-gray-500">สร้างเมื่อ {fmtDateTime(order.createdAt)}</div>
+          </div>
 
-      {/* การจัดส่ง */}
-      <section id="shipping" className="rounded-xl border p-4">
-        <h2 className="font-semibold mb-2">การจัดส่ง</h2>
+          <div className="flex flex-wrap items-center gap-3">
+            <StatusBadge s={order.status as OrderStatus} />
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm">
+              ชำระผ่าน: <span className="font-medium">{order.paymentMethod === "PROMPTPAY" ? "PromptPay" : order.paymentMethod || "-"}</span>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm tabular-nums">
+              ยอดรวม: <span className="font-semibold text-gray-900">{THB(order.total)}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ===== Shipping / Tracking ===== */}
+      <section id="shipping" className="rounded-2xl border border-gray-200 bg-white shadow-sm px-6 py-5">
+        <h2 className="font-semibold text-gray-900">การจัดส่ง</h2>
         {showTracking ? (
-          <div className="space-y-1">
-            <div className="text-sm text-gray-600">เลขติดตาม</div>
-            <div className="font-mono">{order.trackingTag}</div>
+          <div className="mt-2 grid gap-1 text-sm">
+            <div className="text-gray-600">เลขติดตาม</div>
+            <div className="font-mono text-gray-900">{order.trackingTag}</div>
             {order.trackingCreatedAt && (
               <div className="text-xs text-gray-500">
                 สร้างเลขติดตามเมื่อ {fmtDateTime(order.trackingCreatedAt)}
@@ -235,51 +260,61 @@ export default function OrderDetailClient({ orderId }: { orderId: string }) {
             )}
           </div>
         ) : (
-          <div className="text-sm text-gray-500">ยังไม่มีเลขติดตาม</div>
+          <div className="mt-2 text-sm text-gray-500">ยังไม่มีเลขติดตาม</div>
         )}
       </section>
 
-      {/* รายการสินค้า */}
-      <section className="rounded-xl border p-4">
-        <h2 className="font-semibold mb-2">รายการสินค้า</h2>
-        <ul className="divide-y">
+      {/* ===== Items ===== */}
+      <section className="rounded-2xl border border-gray-200 bg-white shadow-sm px-6 py-5">
+        <h2 className="font-semibold text-gray-900">รายการสินค้า</h2>
+        <ul className="mt-2 divide-y divide-gray-100">
           {order.items.map((it) => (
-            <li
-              key={`${it.productId}-${it.color}-${it.size}`}
-              className="py-3 flex items-center gap-3"
-            >
+            <li key={`${it.productId}-${it.color}-${it.size}`} className="py-3 flex items-center gap-3">
+              {/* ใช้ <img> เพื่อไม่ชน domain policy */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={it.imageUrl}
                 alt={it.name}
                 width={56}
                 height={56}
-                className="rounded border"
+                className="rounded-lg border border-gray-200 object-cover"
               />
-              <div className="flex-1">
-                <div className="font-medium">{it.name}</div>
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-gray-900 truncate">{it.name}</div>
                 <div className="text-xs text-gray-600">
                   {it.color} / {it.size} × {it.quantity}
                 </div>
               </div>
-              <div className="text-sm">{THB(it.unitPrice * it.quantity)}</div>
+              <div className="text-sm tabular-nums text-gray-900">{THB(it.unitPrice * it.quantity)}</div>
             </li>
           ))}
         </ul>
-        <div className="mt-3 text-sm text-gray-700 space-y-1">
-          <div>สินค้า: <b>{THB(order.subTotal)}</b></div>
-          <div>ค่าส่ง: <b>{THB(order.shippingFee)}</b></div>
-          <div className="font-semibold">ยอดรวม: <b>{THB(order.total)}</b></div>
+
+        <div className="mt-4 grid gap-1 text-sm tabular-nums text-gray-700">
+          <div className="flex items-center justify-between">
+            <span>สินค้า</span>
+            <b className="text-gray-900">{THB(order.subTotal)}</b>
+          </div>
+          <div className="flex items-center justify-between">
+            <span>ค่าส่ง</span>
+            <b className="text-gray-900">{THB(order.shippingFee)}</b>
+          </div>
+          <div className="mt-1 h-px bg-gray-100" />
+          <div className="flex items-center justify-between font-semibold">
+            <span className="text-gray-900">ยอดรวม</span>
+            <span className="text-gray-900">{THB(order.total)}</span>
+          </div>
         </div>
       </section>
 
-      {/* PromptPay QR + countdown (ถ้ามี) */}
+      {/* ===== PromptPay QR & Countdown ===== */}
       {order.promptpayQrUrl &&
         (order.status === "PENDING_PAYMENT" || order.status === "SLIP_UPLOADED") && (
-          <section className="rounded-xl border p-4 space-y-4">
-            <h2 className="font-semibold">Scan to pay (PromptPay)</h2>
-            <div className="flex items-start gap-6">
-              <div className="border rounded-lg p-2">
+          <section className="rounded-2xl border border-gray-200 bg-white shadow-sm px-6 py-5">
+            <h2 className="font-semibold text-gray-900">สแกนชำระ (PromptPay)</h2>
+            <div className="mt-3 grid gap-6 md:grid-cols-[360px_1fr]">
+              <div className="rounded-xl border border-gray-200 bg-white p-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={order.promptpayQrUrl}
                   alt="PromptPay QR"
@@ -288,19 +323,19 @@ export default function OrderDetailClient({ orderId }: { orderId: string }) {
                   className="rounded-md"
                 />
               </div>
-              <div className="text-sm">
+              <div className="text-sm space-y-2">
                 <div>PromptPay: <span className="font-mono">{order.promptpayTarget}</span></div>
                 <div>ยอดชำระ: <b>{THB(order.total)}</b></div>
                 {order.expiresAt && (
-                  <div className={`${timeLeft < 60 ? "text-red-600" : ""} mt-2`}>
-                    หมดอายุภายใน:{" "}
-                    <b>
+                  <div className={`mt-2 font-medium ${timeWarn}`}>
+                    หมดอายุภายใน{" "}
+                    <span className="tabular-nums">
                       {Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, "0")} นาที
-                    </b>
+                    </span>
                   </div>
                 )}
                 {order.paymentSlipUrl && (
-                  <div className="mt-2">
+                  <div className="pt-1">
                     สลิป:{" "}
                     <a href={order.paymentSlipUrl} target="_blank" className="text-blue-600 hover:underline">
                       เปิดดู
@@ -312,62 +347,64 @@ export default function OrderDetailClient({ orderId }: { orderId: string }) {
           </section>
         )}
 
-      {/* แสดงสถานะ / เหตุผลจากร้าน */}
+      {/* ===== Status Notes ===== */}
       <section className="space-y-2">
         {order.status === "PENDING_PAYMENT" && (
-          <div className="border rounded-md px-3 py-2 text-sm bg-green-50 text-green-700 border-green-200">
+          <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
             โปรดแนบสลิปเพื่อยืนยันการชำระ
           </div>
         )}
         {order.status === "SLIP_UPLOADED" && (
-          <div className="border rounded-md px-3 py-2 text-sm bg-blue-50 text-blue-700 border-blue-200">
+          <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-700">
             ส่งสลิปแล้ว กำลังรอการตรวจสอบ
           </div>
         )}
         {order.status === "PAID" && (
-          <div className="border rounded-md px-3 py-2 text-sm bg-green-50 text-green-700 border-green-200">
+          <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
             ชำระเงินสำเร็จแล้ว
           </div>
         )}
 
         {order.status === "REJECTED" && (
-          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2">
-            <div className="text-sm font-semibold text-red-700">ออเดอร์ถูกปฏิเสธ</div>
+          <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2">
+            <div className="text-sm font-semibold text-rose-700">ออเดอร์ถูกปฏิเสธ</div>
             {order.statusNote && (
-              <p className="mt-1 text-sm text-red-700">
+              <p className="mt-1 text-sm text-rose-700">
                 เหตุผลจากร้าน: <span className="font-medium">{order.statusNote}</span>
               </p>
             )}
             {order.rejectedAt && (
-              <p className="mt-1 text-xs text-red-700/80">เวลา: {fmtDateTime(order.rejectedAt)}</p>
+              <p className="mt-1 text-xs text-rose-700/80">เวลา: {fmtDateTime(order.rejectedAt)}</p>
             )}
           </div>
         )}
 
         {order.status === "CANCELED" && (
-          <div className="rounded-md border border-orange-200 bg-orange-50 px-3 py-2">
-            <div className="text-sm font-semibold text-orange-700">ออเดอร์ถูกยกเลิก</div>
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+            <div className="text-sm font-semibold text-amber-700">ออเดอร์ถูกยกเลิก</div>
             {order.statusNote && (
-              <p className="mt-1 text-sm text-orange-700">
+              <p className="mt-1 text-sm text-amber-700">
                 เหตุผลจากร้าน: <span className="font-medium">{order.statusNote}</span>
               </p>
             )}
             {order.canceledAt && (
-              <p className="mt-1 text-xs text-orange-700/80">เวลา: {fmtDateTime(order.canceledAt)}</p>
+              <p className="mt-1 text-xs text-amber-700/80">เวลา: {fmtDateTime(order.canceledAt)}</p>
             )}
           </div>
         )}
 
         {order.status === "EXPIRED" && (
-          <div className="border rounded-md px-3 py-2 text-sm bg-gray-100 text-gray-700 border-gray-200">
+          <div className="rounded-md border border-gray-200 bg-gray-100 px-3 py-2 text-sm text-gray-700">
             ออเดอร์หมดอายุ
           </div>
         )}
       </section>
 
-      {/* ฟอร์มอัปโหลดสลิป */}
-      <section className={`${!canUploadSlip ? "opacity-60 pointer-events-none" : ""} rounded-xl border p-4`}>
-        <h2 className="font-semibold mb-2">อัปโหลดสลิปโอนเงิน</h2>
+      {/* ===== Upload Slip ===== */}
+      <section
+        className={`${!canUploadSlip ? "opacity-60 pointer-events-none" : ""} rounded-2xl border border-gray-200 bg-white shadow-sm px-6 py-5`}
+      >
+        <h2 className="font-semibold text-gray-900 mb-2">อัปโหลดสลิปโอนเงิน</h2>
         <form onSubmit={submitSlip} className="space-y-3">
           <div>
             <input
@@ -375,43 +412,43 @@ export default function OrderDetailClient({ orderId }: { orderId: string }) {
               name="slip"
               accept="image/png,image/jpeg,image/webp"
               onChange={onSlipChange}
-              className="block w-full text-sm"
+              className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-gray-900 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-gray-800"
               required
               disabled={!canUploadSlip}
               aria-disabled={!canUploadSlip}
               title={!canUploadSlip ? "ออเดอร์ไม่พร้อมสำหรับการแนบสลิป" : ""}
             />
             {slipPreview && (
-              <div className="mt-2">
-                <Image src={slipPreview} alt="Preview" width={220} height={220} className="rounded-md" />
+              <div className="mt-3">
+                <Image src={slipPreview} alt="Preview" width={240} height={240} className="rounded-lg border" />
               </div>
             )}
             <p className="text-xs text-gray-500 mt-1">รองรับ PNG/JPG/WebP ขนาดไม่เกิน 5MB</p>
-            {slipError && <p className="text-xs text-red-600 mt-1">{slipError}</p>}
+            {slipError && <p className="text-xs text-rose-600 mt-1">{slipError}</p>}
           </div>
           <button
             type="submit"
             disabled={!canUploadSlip || uploading}
-            className="px-6 py-3 rounded-lg bg-black text-white font-bold disabled:bg-gray-300"
+            className="inline-flex items-center justify-center rounded-lg bg-gray-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-gray-800 disabled:bg-gray-300"
           >
-            {uploading ? "Uploading..." : "ส่งสลิปเพื่อยืนยัน"}
+            {uploading ? "กำลังอัปโหลด..." : "ส่งสลิปเพื่อยืนยัน"}
           </button>
         </form>
       </section>
 
-      {/* ปุ่มกู้คืนตะกร้า */}
+      {/* ===== Restore Cart ===== */}
       {canRestore && (
-        <section className="rounded-xl border p-4">
+        <section className="rounded-2xl border border-gray-200 bg-white shadow-sm px-6 py-5">
           <button
             onClick={restoreToCart}
-            className="px-6 py-3 rounded-lg border font-semibold hover:bg-gray-50"
+            className="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-800 shadow-sm transition hover:bg-gray-50"
           >
             กู้คืนสินค้ากลับเข้าตะกร้า
           </button>
         </section>
       )}
 
-      <div>
+      <div className="pt-2">
         <Link href="/orders" className="text-sm text-blue-600 hover:underline">
           ← กลับไปหน้ารายการสั่งซื้อ
         </Link>
