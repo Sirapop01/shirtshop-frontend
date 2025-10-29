@@ -63,8 +63,17 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
     config.headers = config.headers ?? {};
     (config.headers as any).Authorization = `Bearer ${token}`;
   }
+
+  // ✅ สำคัญ: ถ้าเป็น FormData ห้ามตั้ง Content-Type เอง
+  const isFormData =
+    typeof FormData !== "undefined" && config.data instanceof FormData;
+  if (isFormData && config.headers) {
+    delete (config.headers as any)["Content-Type"];
+    delete (config.headers as any)["content-type"];
+  }
   return config;
 });
+
 
 // ---- Response: basic error passthrough (customize as needed) ----
 api.interceptors.response.use(

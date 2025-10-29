@@ -3,10 +3,16 @@
 
 import { useState, useEffect, FormEvent, ChangeEvent, useMemo } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { useAuth } from "@/context/AuthContext";
 import Image from "next/image";
-import api from "@/lib/api";              // ✅ ใช้ axios instance (baseURL จาก NEXT_PUBLIC_API_BASE)
 import axios, { AxiosError } from "axios";
+import api from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
+
+// SweetAlert2
+import Swal from "sweetalert2";
+import withReactContent from "sweetalert2-react-content";
+
+const MySwal = withReactContent(Swal);
 
 /** --- ปรับตามร้านของคุณ --- */
 const ALL_AVAILABLE_COLORS = [
@@ -25,17 +31,9 @@ const ALL_AVAILABLE_COLORS = [
 
 const ALL_AVAILABLE_SIZES = ["S", "M", "L", "XL", "XXL"] as const;
 
-/** --- Types (ให้ตรงกับ BE ใหม่) --- */
-type ImageInfo = {
-  publicId: string;
-  url: string;
-};
-
-type VariantStock = {
-  color: string;
-  size: string;
-  quantity: number;
-};
+/** --- Types --- */
+type ImageInfo = { publicId: string; url: string };
+type VariantStock = { color: string; size: string; quantity: number };
 
 type ProductResponse = {
   id: string;
@@ -43,11 +41,12 @@ type ProductResponse = {
   description: string;
   price: number;
   category: string;
-  imageUrls: string[]; // for backward display only
-  images: ImageInfo[];
+  imageUrls?: string[]; // legacy
+  imagePublicIds?: string[]; // legacy
+  images?: ImageInfo[]; // new
   availableColors: string[];
   availableSizes: string[];
-  stockQuantity: number; // sum of variantStocks
+  stockQuantity: number;
   variantStocks: VariantStock[];
   createdAt: string;
 };
@@ -59,11 +58,11 @@ type ProductRequest = {
   category: string;
   availableColors: string[];
   availableSizes: string[];
-  stockQuantity: number; // server จะคำนวณใหม่จาก variantStocks
+  stockQuantity: number;
   variantStocks: VariantStock[];
 };
 
-/** ตาราง matrix สำหรับคงคลังสี×ไซส์ ใช้ Map 2 ชั้นเพื่อแก้ค่าง่าย */
+/** Utils */
 function buildMatrix(
   colors: string[],
   sizes: string[],
@@ -92,15 +91,69 @@ function matrixToVariants(matrix: Map<string, Map<string, number>>): VariantStoc
   return out;
 }
 
+/** ดึง public_id ของ Cloudinary จาก URL (เผื่อ BE ไม่ส่ง publicId มา) */
+function extractPublicIdFromUrl(url: string): string {
+  const m = url.match(/\/upload\/v\d+\/(.+)\.\w+$/); // .../upload/v<ver>/<public_id>.<ext>
+  return m ? m[1] : url;
+}
+
+/** Toast สั้น ๆ */
+function toastSuccess(text: string) {
+  MySwal.fire({
+    icon: "success",
+    title: text,
+    timer: 1400,
+    showConfirmButton: false,
+    position: "top-end",
+    toast: true,
+  });
+}
+function toastError(text: string) {
+  MySwal.fire({
+    icon: "error",
+    title: text,
+    timer: 2000,
+    showConfirmButton: false,
+    position: "top-end",
+    toast: true,
+  });
+}
+/** Confirm กล่องกลาง */
+async function confirmAction({
+  title,
+  text,
+  confirmText = "ลบเลย",
+  confirmColor = "#dc2626",
+}: {
+  title: string;
+  text?: string;
+  confirmText?: string;
+  confirmColor?: string;
+}) {
+  const res = await MySwal.fire({
+    title,
+    text,
+    icon: "warning",
+    showCancelButton: true,
+    confirmButtonText: confirmText,
+    cancelButtonText: "ยกเลิก",
+    focusCancel: true,
+    reverseButtons: true,
+    confirmButtonColor: confirmColor,
+  });
+  return res.isConfirmed;
+}
+
 export default function EditProductPage() {
   const { isAdmin, user } = useAuth();
   const router = useRouter();
   const params = useParams();
   const productId = params?.id as string;
 
-  /** state หลักแบบเดียวกับหน้า create */
+  /** state หลัก */
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDeletingImages, setIsDeletingImages] = useState(false);
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -110,7 +163,6 @@ export default function EditProductPage() {
   const [availableColors, setAvailableColors] = useState<string[]>([]);
   const [availableSizes, setAvailableSizes] = useState<string[]>([]);
 
-  /** matrix เก็บคงคลังต่อ color×size */
   const [stockMatrix, setStockMatrix] = useState<Map<string, Map<string, number>>>(
     () => buildMatrix([], [], [])
   );
@@ -121,6 +173,7 @@ export default function EditProductPage() {
   const [images, setImages] = useState<FileList | null>(null);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
 
+  /** สำหรับ inline message เล็ก ๆ (ยังคงไว้ เผื่ออยากโชว์ในหน้าด้วย) */
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
@@ -128,8 +181,11 @@ export default function EditProductPage() {
   useEffect(() => {
     if (user !== undefined) {
       if (!isAdmin) {
-        alert("Access Denied. You are not an administrator.");
-        router.push("/admin/login");
+        MySwal.fire({
+          icon: "error",
+          title: "Access Denied",
+          text: "คุณไม่ได้เป็นผู้ดูแลระบบ",
+        }).then(() => router.push("/admin/login"));
         return;
       }
       void fetchProduct();
@@ -137,7 +193,7 @@ export default function EditProductPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin, user]);
 
-  /** โหลดสินค้า (axios + interceptor แนบ token ให้เอง) */
+  /** โหลดสินค้า */
   const fetchProduct = async () => {
     setIsLoading(true);
     setError("");
@@ -154,17 +210,32 @@ export default function EditProductPage() {
       );
       setCategory(data.category ?? "T-Shirts");
 
-      const initColors = Array.isArray(data.availableColors)
-        ? data.availableColors
-        : [];
-      const initSizes = Array.isArray(data.availableSizes)
-        ? data.availableSizes
-        : [];
+      const initColors = Array.isArray(data.availableColors) ? data.availableColors : [];
+      const initSizes = Array.isArray(data.availableSizes) ? data.availableSizes : [];
       setAvailableColors(initColors);
       setAvailableSizes(initSizes);
 
       setStockMatrix(buildMatrix(initColors, initSizes, data.variantStocks));
-      setExistingImages(Array.isArray(data.images) ? data.images : []);
+
+      // Normalize ภาพ: รองรับทั้งโครงสร้างเก่า/ใหม่
+      const normalized: ImageInfo[] = (() => {
+        if (Array.isArray(data.images) && data.images.length > 0) {
+          return data.images
+            .filter((it) => it && it.url)
+            .map((it) => ({
+              url: it.url,
+              publicId: it.publicId || extractPublicIdFromUrl(it.url),
+            }));
+        }
+        const urls = Array.isArray(data.imageUrls) ? data.imageUrls : [];
+        const pids = Array.isArray(data.imagePublicIds) ? data.imagePublicIds : [];
+        return urls.map((url, i) => ({
+          url,
+          publicId: pids[i] || extractPublicIdFromUrl(url),
+        }));
+      })();
+
+      setExistingImages(normalized);
     } catch (e: unknown) {
       let msg = "Unexpected error while loading product.";
       if (axios.isAxiosError(e)) {
@@ -174,6 +245,7 @@ export default function EditProductPage() {
         msg = e.message || msg;
       }
       setError(msg);
+      toastError(msg);
     } finally {
       setIsLoading(false);
     }
@@ -261,69 +333,68 @@ export default function EditProductPage() {
     });
   };
 
+  /** ✅ helper: สร้าง FormData สำหรับอัปเดต */
+  const buildUpdateFormData = (removeIds: string[] = [], attachFiles?: FileList | null) => {
+    const variants = matrixToVariants(stockMatrix);
+    const payload: ProductRequest = {
+      name,
+      description,
+      price: parseFloat(price || "0"),
+      category,
+      availableColors,
+      availableSizes,
+      stockQuantity: variants.reduce((a, v) => a + (Number(v.quantity) || 0), 0),
+      variantStocks: variants,
+    };
+
+    const formData = new FormData();
+    formData.append("product", new Blob([JSON.stringify(payload)], { type: "application/json" }));
+
+    if (attachFiles && attachFiles.length > 0) {
+      for (let i = 0; i < attachFiles.length; i++) {
+        formData.append("images", attachFiles[i]);
+      }
+    }
+
+    // ส่งเป็นหลายฟิลด์ชื่อเดียวกัน ให้ Spring bind เป็น List<String>
+    removeIds.forEach((id) => formData.append("removeImagePublicIds", id));
+
+    return formData;
+  };
+
+  /** ✅ ปุ่ม Save (อัปเดตทั้งหมด) */
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
     setSuccessMessage("");
 
     if (!name.trim()) {
+      toastError("กรุณากรอกชื่อสินค้า");
       setError("Please provide product name.");
       return;
     }
     if (!price || Number.isNaN(parseFloat(price))) {
+      toastError("กรุณากรอกราคาให้ถูกต้อง");
       setError("Please provide a valid price.");
       return;
     }
     if (availableColors.length === 0 || availableSizes.length === 0) {
+      toastError("โปรดเลือกสีและไซส์อย่างน้อยอย่างละ 1");
       setError("Please select at least one color and size.");
       return;
     }
 
     setIsSubmitting(true);
     try {
-      const variants = matrixToVariants(stockMatrix);
-      const payload: ProductRequest = {
-        name,
-        description,
-        price: parseFloat(price),
-        category,
-        availableColors,
-        availableSizes,
-        stockQuantity: variants.reduce((a, v) => a + (Number(v.quantity) || 0), 0),
-        variantStocks: variants,
-      };
-
-      const formData = new FormData();
-      formData.append(
-        "product",
-        new Blob([JSON.stringify(payload)], { type: "application/json" })
-      );
-
-      if (images && images.length > 0) {
-        for (let i = 0; i < images.length; i++) {
-          formData.append("images", images[i]);
-        }
-      }
-
-      const removeIds = Array.from(markedForRemoval);
-      if (removeIds.length > 0) {
-        formData.append(
-          "removeImagePublicIds",
-          new Blob([JSON.stringify(removeIds)], { type: "application/json" })
-        );
-      }
-
-      await api.put(`/api/products/${productId}`, formData); // ✅ axios instance
+      const formData = buildUpdateFormData(Array.from(markedForRemoval), images);
+      await api.put(`/api/products/${productId}`, formData, { headers: {} });
 
       setSuccessMessage("Product updated successfully!");
-      // refresh เพื่อสะท้อนของจริงจาก BE
+      toastSuccess("บันทึกการเปลี่ยนแปลงแล้ว");
       await fetchProduct();
-      // reset ไฟล์ใหม่
       setImages(null);
       setImagePreviews([]);
-      const fileInput = document.querySelector(
-        'input[type="file"]'
-      ) as HTMLInputElement | null;
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement | null;
       if (fileInput) fileInput.value = "";
       setMarkedForRemoval(new Set());
     } catch (e: unknown) {
@@ -335,17 +406,95 @@ export default function EditProductPage() {
         msg = e.message || msg;
       }
       setError(msg);
+      toastError(msg);
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  /** ✅ ลบ “รูปที่เลือกทั้งหมด” ทันที (SweetAlert confirm) */
+  const handleDeleteSelectedImages = async () => {
+    if (markedForRemoval.size === 0) return;
+
+    const ok = await confirmAction({
+      title: `ลบรูปที่เลือกทั้งหมด ${markedForRemoval.size} รูป?`,
+      text: "การลบไม่สามารถย้อนกลับได้",
+      confirmText: "ลบรูปที่เลือก",
+      confirmColor: "#dc2626",
+    });
+    if (!ok) return;
+
+    setError("");
+    setSuccessMessage("");
+    setIsDeletingImages(true);
+    try {
+      const formData = buildUpdateFormData(Array.from(markedForRemoval), null);
+      await api.put(`/api/products/${productId}`, formData, { headers: {} });
+
+      toastSuccess("ลบรูปที่เลือกแล้ว");
+      await fetchProduct();
+      setMarkedForRemoval(new Set());
+    } catch (e: unknown) {
+      let msg = "Failed to delete images.";
+      if (axios.isAxiosError(e)) {
+        const ax = e as AxiosError<any>;
+        msg = ax.response?.data?.message || ax.response?.data?.error || ax.message || msg;
+      } else if (e instanceof Error) {
+        msg = e.message || msg;
+      }
+      setError(msg);
+      toastError(msg);
+    } finally {
+      setIsDeletingImages(false);
+    }
+  };
+
+  /** ✅ ลบ “รูปเดี่ยว” ทันที (SweetAlert confirm) */
+  const handleDeleteSingleImage = async (publicId: string) => {
+    const ok = await confirmAction({
+      title: "ยืนยันลบรูปนี้?",
+      text: "การลบไม่สามารถย้อนกลับได้",
+      confirmText: "ลบรูปนี้",
+      confirmColor: "#dc2626",
+    });
+    if (!ok) return;
+
+    setError("");
+    setSuccessMessage("");
+    setIsDeletingImages(true);
+    try {
+      const formData = buildUpdateFormData([publicId], null);
+      await api.put(`/api/products/${productId}`, formData, { headers: {} });
+
+      toastSuccess("ลบรูปแล้ว");
+      await fetchProduct();
+      setMarkedForRemoval((prev) => {
+        const next = new Set(prev);
+        next.delete(publicId);
+        return next;
+      });
+    } catch (e: unknown) {
+      let msg = "Failed to delete image.";
+      if (axios.isAxiosError(e)) {
+        const ax = e as AxiosError<any>;
+        msg = ax.response?.data?.message || ax.response?.data?.error || ax.message || msg;
+      } else if (e instanceof Error) {
+        msg = e.message || msg;
+      }
+      setError(msg);
+      toastError(msg);
+    } finally {
+      setIsDeletingImages(false);
+    }
+  };
+
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">Loading...</div>
+      <div className="min-h-screen flex items-center justify-center text-gray-600">
+        กำลังโหลด...
+      </div>
     );
   }
-
   if (!isAdmin) return null;
 
   return (
@@ -361,15 +510,10 @@ export default function EditProductPage() {
           </button>
         </div>
 
-        <form
-          onSubmit={handleSubmit}
-          className="p-8 bg-white rounded-lg shadow-md space-y-8"
-        >
+        <form onSubmit={handleSubmit} className="p-8 bg-white rounded-lg shadow-md space-y-8">
           {/* Basic fields */}
           <div>
-            <label className="block text-gray-700 font-medium mb-1">
-              Product Name
-            </label>
+            <label className="block text-gray-700 font-medium mb-1">Product Name</label>
             <input
               type="text"
               value={name}
@@ -380,9 +524,7 @@ export default function EditProductPage() {
           </div>
 
           <div>
-            <label className="block text-gray-700 font-medium mb-1">
-              Description
-            </label>
+            <label className="block text-gray-700 font-medium mb-1">Description</label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -394,9 +536,7 @@ export default function EditProductPage() {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="md:col-span-1">
-              <label className="block text-gray-700 font-medium mb-1">
-                Price (THB)
-              </label>
+              <label className="block text-gray-700 font-medium mb-1">Price (THB)</label>
               <input
                 type="number"
                 value={price}
@@ -408,9 +548,7 @@ export default function EditProductPage() {
               />
             </div>
             <div className="md:col-span-2">
-              <label className="block text-gray-700 font-medium mb-1">
-                Category
-              </label>
+              <label className="block text-gray-700 font-medium mb-1">Category</label>
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
@@ -428,15 +566,10 @@ export default function EditProductPage() {
           {/* Available Colors / Sizes */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-              <label className="block text-gray-700 font-medium mb-1">
-                Available Colors
-              </label>
+              <label className="block text-gray-700 font-medium mb-1">Available Colors</label>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-2">
                 {ALL_AVAILABLE_COLORS.map((color) => (
-                  <label
-                    key={color}
-                    className="flex items-center space-x-2 cursor-pointer"
-                  >
+                  <label key={color} className="flex items-center space-x-2 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={availableColors.includes(color)}
@@ -450,15 +583,10 @@ export default function EditProductPage() {
             </div>
 
             <div>
-              <label className="block text-gray-700 font-medium mb-1">
-                Available Sizes
-              </label>
+              <label className="block text-gray-700 font-medium mb-1">Available Sizes</label>
               <div className="grid grid-cols-5 gap-3 mt-2">
                 {ALL_AVAILABLE_SIZES.map((size) => (
-                  <label
-                    key={size}
-                    className="flex items-center space-x-2 cursor-pointer"
-                  >
+                  <label key={size} className="flex items-center space-x-2 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={availableSizes.includes(size)}
@@ -475,12 +603,9 @@ export default function EditProductPage() {
           {/* Variant Stock Matrix */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="block text-gray-700 font-bold">
-                Stock by Color × Size
-              </label>
+              <label className="block text-gray-700 font-bold">Stock by Color × Size</label>
               <div className="text-sm text-gray-600">
-                Total:{" "}
-                <span className="font-semibold">{grandTotal.toLocaleString()}</span>
+                Total: <span className="font-semibold">{grandTotal.toLocaleString()}</span>
               </div>
             </div>
 
@@ -533,51 +658,110 @@ export default function EditProductPage() {
             </div>
           </div>
 
-          {/* ภาพเดิม */}
+          {/* Existing images + delete (UI ปรับใหม่) */}
           {existingImages.length > 0 && (
             <div>
-              <label className="block text-gray-700 font-medium mb-1">
-                Existing Images (click to mark for removal)
-              </label>
-              <div className="mt-2 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <label className="block text-gray-700 font-medium">
+                    Existing Images
+                  </label>
+                  {markedForRemoval.size > 0 && (
+                    <span className="inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-700">
+                      Selected: {markedForRemoval.size}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={markedForRemoval.size === 0 || isDeletingImages}
+                    onClick={handleDeleteSelectedImages}
+                    className="px-3 py-1.5 rounded-md text-white bg-red-600 hover:bg-red-700 disabled:opacity-50"
+                    title="Delete all selected images now"
+                  >
+                    {isDeletingImages
+                      ? "Deleting..."
+                      : `Delete Selected (${markedForRemoval.size || 0})`}
+                  </button>
+                  {markedForRemoval.size > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setMarkedForRemoval(new Set())}
+                      className="px-3 py-1.5 rounded-md border border-gray-300 hover:bg-gray-50"
+                      title="Clear selection"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
                 {existingImages.map((img) => {
                   const isRemoved = markedForRemoval.has(img.publicId);
                   return (
-                    <button
-                      type="button"
+                    <div
                       key={img.publicId}
-                      onClick={() => toggleRemoveExisting(img.publicId)}
-                      className={`relative w-full aspect-square rounded-lg overflow-hidden border ${
-                        isRemoved ? "ring-4 ring-red-500" : ""
-                      }`}
-                      title={
-                        isRemoved ? "Will be removed" : "Click to remove this image"
-                      }
+                      className={`group relative rounded-xl overflow-hidden border bg-white shadow-sm transition hover:shadow-md ${isRemoved ? "ring-4 ring-red-500" : ""
+                        }`}
                     >
-                      <Image
-                        src={img.url}
-                        alt="Existing"
-                        fill
-                        sizes="100px"
-                        className={`object-cover ${isRemoved ? "opacity-50" : ""}`}
-                      />
-                      {isRemoved && (
-                        <span className="absolute inset-0 flex items-center justify-center text-white font-semibold text-sm bg-black/40">
-                          Remove
+                      {/* image */}
+                      <button
+                        type="button"
+                        onClick={() => toggleRemoveExisting(img.publicId)}
+                        className="block w-full aspect-square"
+                        title={isRemoved ? "Selected to remove" : "Click to select"}
+                      >
+                        <Image
+                          src={img.url}
+                          alt="Existing"
+                          fill
+                          sizes="180px"
+                          className={`object-cover ${isRemoved ? "opacity-60" : ""}`}
+                        />
+                      </button>
+
+                      {/* overlay top bar */}
+                      <div className="pointer-events-none absolute inset-x-0 top-0 p-2 flex justify-between opacity-0 group-hover:opacity-100 transition">
+                        <span className="pointer-events-auto inline-flex items-center gap-2 bg-black/60 text-white text-xs px-2 py-1 rounded-md">
+                          <input
+                            type="checkbox"
+                            onChange={() => toggleRemoveExisting(img.publicId)}
+                            checked={isRemoved}
+                            className="h-3 w-3 accent-red-500"
+                          />
+                          {isRemoved ? "Selected" : "Select"}
                         </span>
-                      )}
-                    </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteSingleImage(img.publicId)}
+                          disabled={isDeletingImages}
+                          className="pointer-events-auto inline-flex items-center bg-red-600 hover:bg-red-700 text-white text-xs px-2 py-1 rounded-md disabled:opacity-50"
+                          title="Delete this image now"
+                        >
+                          {isDeletingImages ? "..." : "Delete"}
+                        </button>
+                      </div>
+
+                      {/* bottom info */}
+                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-2">
+                        <p className="text-[10px] text-white truncate" title={img.publicId}>
+                          {img.publicId}
+                        </p>
+                      </div>
+                    </div>
                   );
                 })}
               </div>
             </div>
           )}
 
-          {/* เพิ่มภาพใหม่ */}
+          {/* Add new images */}
           <div>
-            <label className="block text-gray-700 font-medium mb-1">
-              Add New Images
-            </label>
+            <label className="block text-gray-700 font-medium mb-1">Add New Images</label>
             <input
               type="file"
               onChange={handleImageChange}
@@ -589,21 +773,17 @@ export default function EditProductPage() {
 
           {imagePreviews.length > 0 && (
             <div>
-              <label className="block text-gray-700 font-medium mb-1">
-                New Image Preview
-              </label>
-              <div className="mt-2 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-4">
+              <label className="block text-gray-700 font-medium mb-1">New Image Preview</label>
+              <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-4">
                 {imagePreviews.map((previewUrl, index) => (
-                  <div
-                    key={index}
-                    className="relative w-full aspect-square rounded-lg overflow-hidden border"
-                  >
+                  <div key={index} className="relative w-full aspect-square rounded-lg overflow-hidden border">
                     <Image
                       src={previewUrl}
                       alt={`Preview ${index + 1}`}
                       fill
-                      sizes="100px"
+                      sizes="150px"
                       className="object-cover"
+                      unoptimized
                     />
                   </div>
                 ))}
