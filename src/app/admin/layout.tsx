@@ -5,16 +5,20 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import AdminGuard from "@/components/auth/AdminGuard";
 import { useAuth } from "@/context/AuthContext";
+import { useBranding } from "@/context/BrandingContext";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { logout } = useAuth();
+
+  const branding = useBranding();
+  const siteName = branding?.siteName?.trim() || "StyleWhere"; // ✅ ใช้จาก BrandingContext
+
   const [openProducts, setOpenProducts] = useState(true);
+  const [openOrders, setOpenOrders] = useState(true);
+  const [openSettings, setOpenSettings] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [openSettings, setOpenSettings] = useState(false);
-  const [openOrders, setOpenOrders] = useState(true); // ⬅️ เพิ่ม state ด้านบนเหมือน openProducts
-
 
   // ปิด sidebar เมื่อ path เปลี่ยน
   useEffect(() => {
@@ -75,8 +79,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           aria-label="Sidebar"
         >
           <div className="flex items-center justify-between border-b px-4 py-4">
-            <Link href="/admin" className="text-lg font-semibold tracking-tight">
-              SyleWhere
+            {/* ใช้ siteName จาก BrandingContext */}
+            <Link href="/admin" className="flex items-center gap-2 text-lg font-semibold tracking-tight">
+              {/* แถมโลโก้ถ้ามี (ไม่มีก็ข้าม) */}
+              {branding?.logoUrl && (
+                <img
+                  src={branding.logoUrl}
+                  alt={siteName}
+                  className="h-6 w-6 rounded-sm object-cover"
+                />
+              )}
+              <span>{siteName}</span>
             </Link>
             <button
               className="rounded-lg p-2 text-gray-600 hover:bg-gray-100 md:hidden"
@@ -107,6 +120,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               </div>
             )}
 
+            {/* Orders group */}
             <button
               type="button"
               onClick={() => setOpenOrders((s) => !s)}
@@ -116,34 +130,36 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               <span className="flex-1 text-left">Orders</span>
               <span className="text-xs">{openOrders ? "▾" : "▸"}</span>
             </button>
-
             {openOrders && (
               <div className="ml-6 space-y-1">
                 <NavItem href="/admin/orders" label="Check the order" />
               </div>
             )}
-            
+
             <NavItem href="/admin/customers" label="Customers" icon={<span>👥</span>} />
 
+            {/* Settings group */}
             <button
-                type="button"
-                onClick={() => setOpenSettings((s) => !s)}
-                className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm text-gray-600 transition hover:bg-gray-50 hover:text-gray-900"
-                >
-                <span>⚙️</span>
-                <span className="flex-1 text-left">Setting</span>
-                <span className="text-xs">{openSettings ? "▾" : "▸"}</span>
+              type="button"
+              onClick={() => setOpenSettings((s) => !s)}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm text-gray-600 transition hover:bg-gray-50 hover:text-gray-900"
+            >
+              <span>⚙️</span>
+              <span className="flex-1 text-left">Setting</span>
+              <span className="text-xs">{openSettings ? "▾" : "▸"}</span>
             </button>
-              {openSettings && (
-                <div className="ml-6 space-y-1">
-                  <NavItem href="/admin/setting/payment" label="Payment" />
-                  <NavItem href="/admin/setting/admin" label="Admin" />
-                  <NavItem href="/admin/setting/name" label="Logo & Website name" />
-                </div>
-              )}
+            {openSettings && (
+              <div className="ml-6 space-y-1">
+                <NavItem href="/admin/setting/payment" label="Payment" />
+                <NavItem href="/admin/setting/admin" label="Admin" />
+                <NavItem href="/admin/setting/name" label="Logo & Website name" />
+              </div>
+            )}
           </nav>
+
+          {/* Footer — ใช้ siteName */}
           <div className="absolute bottom-0 w-full border-t px-4 py-3 text-xs text-gray-500">
-            © {new Date().getFullYear()} SyleWhere
+            © {new Date().getFullYear()} {siteName}
           </div>
         </aside>
 
@@ -170,7 +186,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 </button>
 
                 <div id="user-menu-anchor" className="relative">
-                  {/* trigger */}
                   <button
                     onClick={() => setUserMenuOpen((o) => !o)}
                     className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1 text-sm text-gray-700 hover:bg-gray-50"
@@ -182,7 +197,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     <span className="text-gray-400">▾</span>
                   </button>
 
-                  {/* dropdown */}
                   {userMenuOpen && (
                     <div className="absolute right-0 z-40 mt-2 w-44 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
                       <button
