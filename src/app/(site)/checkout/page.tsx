@@ -8,6 +8,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useThaiLocations } from "@/lib/useThaiLocations";
 
+// ✅ SweetAlert2
+import Swal from "sweetalert2";
+import withReactContent from "sweetalert2-react-content";
+
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 /* ---------- Types ---------- */
@@ -124,6 +128,20 @@ async function authFetch(url: string, init?: RequestInit) {
   return fetch(url, { ...init, headers, cache: "no-store" });
 }
 
+/* ---------- SweetAlert helpers ---------- */
+const MySwal = withReactContent(Swal);
+const toast = MySwal.mixin({
+  toast: true,
+  position: "top-end",
+  showConfirmButton: false,
+  timer: 2200,
+  timerProgressBar: true,
+});
+const sSuccess = (title: string, text?: string) => toast.fire({ icon: "success", title, text });
+const sError = (title: string, text?: string) => toast.fire({ icon: "error", title, text });
+const sInfo = (title: string, text?: string) => toast.fire({ icon: "info", title, text });
+const sWarn = (title: string, text?: string) => toast.fire({ icon: "warning", title, text });
+
 /* ================================================================= */
 
 export default function CheckoutPage() {
@@ -143,12 +161,19 @@ export default function CheckoutPage() {
   const [addresses, setAddresses] = useState<AddressListItem[]>([]);
   const [addrLoading, setAddrLoading] = useState(false);
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
-  
+
   const { getProvinceNameById, getAmphureNameById } = useThaiLocations();
   /* ----- redirect unauthenticated ----- */
   useEffect(() => {
     if (!getAccessToken()) {
-      router.replace(`/login?next=${encodeURIComponent("/checkout")}`);
+      MySwal.fire({
+        icon: "warning",
+        title: "กรุณาเข้าสู่ระบบ",
+        text: "ต้องเข้าสู่ระบบก่อนทำการชำระเงิน",
+        confirmButtonText: "ไปหน้าเข้าสู่ระบบ",
+      }).then(() => {
+        router.replace(`/login?next=${encodeURIComponent("/checkout")}`);
+      });
     }
   }, [router]);
 
@@ -233,21 +258,55 @@ export default function CheckoutPage() {
 
   /* ----- create order (must have selectedAddressId) ----- */
   const startCheckout = async () => {
-    if (!canCheckout || !selectedAddressId) return;
+    if (!selectedAddressId) {
+      sWarn("กรุณาเลือกที่อยู่จัดส่ง");
+      return;
+    }
+    if (cartItems.length === 0 || cartTotal <= 0) {
+      sWarn("ตะกร้าสินค้าว่าง", "เลือกรายการสินค้าก่อนทำการชำระเงิน");
+      return;
+    }
+
+    // ✅ ยืนยันก่อนสร้างออเดอร์
+    const chosen = addresses.find(a => a.id === selectedAddressId);
+    const addrText = chosen
+      ? `${chosen.recipientName} • ${chosen.phone}\n${chosen.line1} ${chosen.line2 ?? ""}\n${formatThaiAddress(chosen)}`
+      : "—";
+
+    const confirm = await MySwal.fire({
+      icon: "question",
+      title: "ยืนยันสร้างคำสั่งซื้อด้วย PromptPay?",
+      html: `
+        <div style="text-align:left">
+          <div><b>ยอดชำระ:</b> ${new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB" }).format(cartTotal)}</div>
+          <div style="margin-top:6px"><b>ที่อยู่จัดส่ง:</b><br/><pre style="white-space:pre-wrap;font-family:inherit">${addrText}</pre></div>
+        </div>
+      `,
+      showCancelButton: true,
+      confirmButtonText: "ยืนยัน",
+      cancelButtonText: "ยกเลิก",
+      reverseButtons: true,
+    });
+    if (!confirm.isConfirmed) return;
+
     setCreating(true);
     try {
       const res = await authFetch(`${API}/api/orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paymentMethod: "PROMPTPAY", addressId: selectedAddressId }), // 👈 ส่ง addressId
+        body: JSON.stringify({ paymentMethod: "PROMPTPAY", addressId: selectedAddressId }),
       });
       if (!res.ok) {
-        console.error("[checkout] create order failed", await res.text());
+        const msg = await res.text();
+        sError("สร้างคำสั่งซื้อไม่สำเร็จ", msg || undefined);
         return;
       }
       const data = (await res.json()) as CreateOrderResponse;
       setOrder(data);
+      sSuccess("สร้างคำสั่งซื้อสำเร็จ", "สแกน QR เพื่อชำระเงินได้เลย");
       await refresh(); // FE cart -> clear
+    } catch (e: any) {
+      sError("เกิดข้อผิดพลาด", e?.message || "ไม่สามารถสร้างคำสั่งซื้อ");
     } finally {
       setCreating(false);
     }
@@ -277,32 +336,57 @@ export default function CheckoutPage() {
     const f = e.target.files?.[0];
     if (!f) return;
     if (!/^image\/(png|jpe?g|webp)$/i.test(f.type)) {
-      setSlipError("รองรับเฉพาะ PNG / JPG / WebP");
+      const msg = "รองรับเฉพาะ PNG / JPG / WebP";
+      setSlipError(msg);
+      sError("ไฟล์ไม่ถูกต้อง", msg);
       e.target.value = ""; setSlipPreview(null); return;
     }
     if (f.size > 5 * 1024 * 1024) {
-      setSlipError("ไฟล์ใหญ่เกิน 5MB");
+      const msg = "ไฟล์ใหญ่เกิน 5MB";
+      setSlipError(msg);
+      sError("ไฟล์ใหญ่เกินไป", msg);
       e.target.value = ""; setSlipPreview(null); return;
     }
     setSlipPreview(URL.createObjectURL(f));
+    sInfo("เพิ่มสลิปเรียบร้อย", "ตรวจสอบตัวอย่างก่อนส่ง");
   };
 
   const uploadSlip = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!order || !canUploadSlip) return;
+    if (!order || !canUploadSlip) {
+      sWarn("ไม่สามารถอัปโหลดสลิปได้", disabledReason || "");
+      return;
+    }
     const fileInput = e.currentTarget.elements.namedItem("slip") as HTMLInputElement;
     const file = fileInput.files?.[0];
-    if (!file) { setSlipError("กรุณาเลือกไฟล์สลิป"); return; }
+    if (!file) {
+      const msg = "กรุณาเลือกไฟล์สลิป";
+      setSlipError(msg);
+      sWarn("ยังไม่ได้เลือกไฟล์", msg);
+      return;
+    }
 
     setUploading(true);
     try {
       const fd = new FormData();
       fd.append("file", file);
       const res = await authFetch(`${API}/api/orders/${order.orderId}/slip`, { method: "POST", body: fd });
-      if (!res.ok) { setSlipError(`อัปโหลดไม่สำเร็จ: ${await res.text()}`); return; }
+      if (!res.ok) {
+        const msg = await res.text();
+        setSlipError(`อัปโหลดไม่สำเร็จ: ${msg}`);
+        sError("อัปโหลดไม่สำเร็จ", msg || undefined);
+        return;
+      }
       const data = (await res.json()) as { status: OrderStatus; paymentSlipUrl?: string };
       setOrderDetail(prev => prev ? { ...prev, status: data.status, paymentSlipUrl: data.paymentSlipUrl } : prev);
-      alert("อัปโหลดสลิปเรียบร้อย รอแอดมินยืนยัน");
+      await MySwal.fire({
+        icon: "success",
+        title: "อัปโหลดสลิปเรียบร้อย",
+        text: "กรุณารอแอดมินตรวจสอบยืนยันการชำระเงิน",
+        confirmButtonText: "ตกลง",
+      });
+    } catch (e: any) {
+      sError("เกิดข้อผิดพลาด", e?.message || "ไม่สามารถอัปโหลดสลิป");
     } finally {
       setUploading(false);
     }
@@ -372,11 +456,11 @@ export default function CheckoutPage() {
               <ul className="space-y-2">
                 {addresses.map(a => {
                   const n = normalizeAddr(a as any);
-                  const inputId = `addr-${a.id}`;             // 👈 สร้าง id
+                  const inputId = `addr-${a.id}`;
                   return (
                     <li key={a.id} className="flex items-start gap-2">
                       <input
-                        id={inputId}                           // 👈 ใส่ id ให้ input
+                        id={inputId}
                         type="radio"
                         name="addr"
                         value={a.id}
@@ -385,7 +469,7 @@ export default function CheckoutPage() {
                         onChange={() => setSelectedAddressId(a.id!)}
                       />
                       <label
-                        htmlFor={inputId}                      // 👈 htmlFor ให้ตรงกับ id
+                        htmlFor={inputId}
                         className="flex-1 rounded-xl border p-3 cursor-pointer"
                       >
                         <div className="font-medium text-gray-900">{n.fullName || "-"}</div>

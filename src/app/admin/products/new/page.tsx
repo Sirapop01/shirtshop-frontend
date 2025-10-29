@@ -1,9 +1,12 @@
+// src/app/(admin)/products/new/page.tsx
 "use client";
 
 import { useState, useEffect, FormEvent, ChangeEvent, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import Image from "next/image";
+
+const API = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080").replace(/\/+$/, "");
 
 // รายการสีและไซส์ทั้งหมดที่มีในร้าน
 const ALL_AVAILABLE_COLORS = [
@@ -72,31 +75,32 @@ export default function NewProductPage() {
   const { isAdmin, token, user } = useAuth();
   const router = useRouter();
 
-  // State สำหรับจัดการ Loading และการป้องกันหน้า
+  // Loading / Guard
   const [isLoading, setIsLoading] = useState(true);
 
-  // State สำหรับฟอร์มข้อมูลสินค้า
+  // ฟอร์มข้อมูลสินค้า
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState("");
   const [category, setCategory] = useState("T-Shirts");
 
-  // ปรับจากของเดิม: ใช้ availableColors/Sizes + stockMatrix แทน stockQuantity เดี่ยว
+  // ใช้ availableColors/Sizes + stockMatrix
   const [selectedColors, setSelectedColors] = useState<string[]>([]);
   const [selectedSizes, setSelectedSizes] = useState<string[]>([]);
   const [stockMatrix, setStockMatrix] = useState<Map<string, Map<string, number>>>(
     () => buildMatrix([], [])
   );
 
-  const [images, setImages] = useState<FileList | null>(null);
+  // ✅ เก็บรูปเป็น Array เพื่อ append ได้หลายรอบ
+  const [images, setImages] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
 
-  // State สำหรับแสดงผลลัพธ์
+  // แสดงผลลัพธ์
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // กลไกป้องกันหน้า (Protected Route)
+  // ป้องกันหน้า (Protected)
   useEffect(() => {
     if (user !== undefined) {
       setIsLoading(false);
@@ -107,29 +111,22 @@ export default function NewProductPage() {
     }
   }, [isAdmin, user, router]);
 
-  // สร้าง/ล้าง URL ของรูปภาพตัวอย่าง
+  // สร้าง/ล้าง URL ของรูปภาพตัวอย่างจาก images[]
   useEffect(() => {
     if (!images || images.length === 0) {
       setImagePreviews([]);
       return;
     }
-    const newImageUrls: string[] = Array.from(images).map((file) =>
-      URL.createObjectURL(file)
-    );
-    setImagePreviews(newImageUrls);
-
-    // Cleanup: ล้าง URL เก่าเพื่อกัน memory leak
-    return () => newImageUrls.forEach((url) => URL.revokeObjectURL(url));
+    const urls = images.map((f) => URL.createObjectURL(f));
+    setImagePreviews(urls);
+    return () => urls.forEach((u) => URL.revokeObjectURL(u));
   }, [images]);
 
-  // เมื่อเซ็ตสี/ไซส์ใหม่ ให้ sync โครงตาราง
+  // sync matrix เมื่อเลือกสี/ไซส์ใหม่
   useEffect(() => {
     setStockMatrix((prev) => {
-      // แปลงค่าจาก prev เก็บไว้ก่อน
       const prevVariants = matrixToVariants(prev);
-      // สร้าง matrix ตามรายการปัจจุบัน
       const next = buildMatrix(selectedColors, selectedSizes);
-      // ใส่ค่าที่เคยกรอกไว้กลับไป
       prevVariants.forEach(({ color, size, quantity }) => {
         if (next.has(color) && next.get(color)!.has(size)) {
           next.get(color)!.set(size, quantity);
@@ -162,8 +159,41 @@ export default function NewProductPage() {
     });
   };
 
+  // ✅ เพิ่มรูปทีละหลาย ๆ ครั้ง + กันซ้ำ + จำกัด type/size/จำนวน
+  const MAX_FILES = 10; // ปรับได้
+  const MAX_SIZE_MB = 5; // จำกัดขนาดไฟล์ (MB) ต่อรูป
+  const ALLOW_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
   const handleImageChange = (e: ChangeEvent<HTMLInputElement>) => {
-    setImages(e.target.files);
+    const picked = Array.from(e.target.files ?? []);
+    if (picked.length === 0) return;
+
+    // กรองชนิด/ขนาด
+    const valid = picked.filter((f) => {
+      const okType = ALLOW_TYPES.includes(f.type);
+      const okSize = f.size <= MAX_SIZE_MB * 1024 * 1024;
+      return okType && okSize;
+    });
+
+    setImages((prev) => {
+      const merged = [...prev, ...valid];
+      // กันซ้ำด้วย key
+      const seen = new Set<string>();
+      const unique = merged.filter((f) => {
+        const key = `${f.name}-${f.size}-${f.lastModified}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      return unique.slice(0, MAX_FILES);
+    });
+
+    // ล้างค่า input เพื่อให้เลือกไฟล์ชื่อเดิมซ้ำได้อีกในอนาคต
+    e.target.value = "";
+  };
+
+  const removeImageAt = (idx: number) => {
+    setImages((prev) => prev.filter((_, i) => i !== idx));
   };
 
   // totals
@@ -236,14 +266,11 @@ export default function NewProductPage() {
       new Blob([JSON.stringify(productData)], { type: "application/json" })
     );
 
-    if (images) {
-      for (let i = 0; i < images.length; i++) {
-        formData.append("images", images[i]);
-      }
-    }
+    // ✅ ใส่รูปทั้งหมด
+    images.forEach((file) => formData.append("images", file));
 
     try {
-      const res = await fetch("http://localhost:8080/api/products", {
+      const res = await fetch(`${API}/api/products`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
@@ -261,16 +288,10 @@ export default function NewProductPage() {
       setDescription("");
       setPrice("");
       setCategory("T-Shirts");
-
       setSelectedColors([]);
       setSelectedSizes([]);
       setStockMatrix(buildMatrix([], []));
-
-      setImages(null);
-      const fileInput = document.querySelector(
-        'input[type="file"]'
-      ) as HTMLInputElement | null;
-      if (fileInput) fileInput.value = "";
+      setImages([]);
       setImagePreviews([]);
     } catch (err: any) {
       setError(`Failed to create product: ${err.message}`);
@@ -489,6 +510,9 @@ export default function NewProductPage() {
               accept="image/*"
               className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-black file:text-white hover:file:bg-gray-800"
             />
+            <p className="mt-1 text-xs text-gray-500">
+              รองรับ: JPEG/PNG/WebP, สูงสุด {MAX_FILES} รูป, ไฟล์ละไม่เกิน {MAX_SIZE_MB}MB
+            </p>
           </div>
 
           {imagePreviews.length > 0 && (
@@ -509,6 +533,14 @@ export default function NewProductPage() {
                       sizes="100px"
                       className="object-cover"
                     />
+                    <button
+                      type="button"
+                      onClick={() => removeImageAt(index)}
+                      className="absolute top-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded"
+                      aria-label="Remove image"
+                    >
+                      Remove
+                    </button>
                   </div>
                 ))}
               </div>
