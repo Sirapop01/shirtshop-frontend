@@ -68,10 +68,10 @@ export default function NewProductPage() {
   const { isAdmin, user } = useAuth();
   const router = useRouter();
 
-  // State สำหรับจัดการ Loading และการป้องกันหน้า
+  // Loading / Guard
   const [isLoading, setIsLoading] = useState(true);
 
-  // State สำหรับฟอร์มข้อมูลสินค้า
+  // ฟอร์มข้อมูลสินค้า
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState("");
@@ -84,15 +84,16 @@ export default function NewProductPage() {
     () => buildMatrix([], [])
   );
 
-  const [images, setImages] = useState<FileList | null>(null);
+  // ✅ เก็บรูปเป็น Array เพื่อ append ได้หลายรอบ
+  const [images, setImages] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
 
-  // State สำหรับแสดงผลลัพธ์
+  // แสดงผลลัพธ์
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // กลไกป้องกันหน้า (Protected Route)
+  // ป้องกันหน้า (Protected)
   useEffect(() => {
     if (user !== undefined) {
       setIsLoading(false);
@@ -103,7 +104,7 @@ export default function NewProductPage() {
     }
   }, [isAdmin, user, router]);
 
-  // สร้าง/ล้าง URL ของรูปภาพตัวอย่าง
+  // สร้าง/ล้าง URL ของรูปภาพตัวอย่างจาก images[]
   useEffect(() => {
     if (!images || images.length === 0) {
       setImagePreviews([]);
@@ -153,8 +154,41 @@ export default function NewProductPage() {
     });
   };
 
+  // ✅ เพิ่มรูปทีละหลาย ๆ ครั้ง + กันซ้ำ + จำกัด type/size/จำนวน
+  const MAX_FILES = 10; // ปรับได้
+  const MAX_SIZE_MB = 5; // จำกัดขนาดไฟล์ (MB) ต่อรูป
+  const ALLOW_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
   const handleImageChange = (e: ChangeEvent<HTMLInputElement>) => {
-    setImages(e.target.files);
+    const picked = Array.from(e.target.files ?? []);
+    if (picked.length === 0) return;
+
+    // กรองชนิด/ขนาด
+    const valid = picked.filter((f) => {
+      const okType = ALLOW_TYPES.includes(f.type);
+      const okSize = f.size <= MAX_SIZE_MB * 1024 * 1024;
+      return okType && okSize;
+    });
+
+    setImages((prev) => {
+      const merged = [...prev, ...valid];
+      // กันซ้ำด้วย key
+      const seen = new Set<string>();
+      const unique = merged.filter((f) => {
+        const key = `${f.name}-${f.size}-${f.lastModified}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      return unique.slice(0, MAX_FILES);
+    });
+
+    // ล้างค่า input เพื่อให้เลือกไฟล์ชื่อเดิมซ้ำได้อีกในอนาคต
+    e.target.value = "";
+  };
+
+  const removeImageAt = (idx: number) => {
+    setImages((prev) => prev.filter((_, i) => i !== idx));
   };
 
   // totals
@@ -239,7 +273,6 @@ export default function NewProductPage() {
       setDescription("");
       setPrice("");
       setCategory("T-Shirts");
-
       setSelectedColors([]);
       setSelectedSizes([]);
       setStockMatrix(buildMatrix([], []));
@@ -459,6 +492,9 @@ export default function NewProductPage() {
               accept="image/*"
               className="w-full text-sm text-gray-500 file:mr-4 file:rounded-full file:border-0 file:bg-black file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-gray-800"
             />
+            <p className="mt-1 text-xs text-gray-500">
+              รองรับ: JPEG/PNG/WebP, สูงสุด {MAX_FILES} รูป, ไฟล์ละไม่เกิน {MAX_SIZE_MB}MB
+            </p>
           </div>
 
           {imagePreviews.length > 0 && (
@@ -474,6 +510,14 @@ export default function NewProductPage() {
                       sizes="100px"
                       className="object-cover"
                     />
+                    <button
+                      type="button"
+                      onClick={() => removeImageAt(index)}
+                      className="absolute top-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded"
+                      aria-label="Remove image"
+                    >
+                      Remove
+                    </button>
                   </div>
                 ))}
               </div>
