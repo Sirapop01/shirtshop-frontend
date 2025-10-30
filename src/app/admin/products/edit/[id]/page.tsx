@@ -1,6 +1,6 @@
 // src/app/admin/products/[id]/page.tsx
 "use client";
-
+//fortest
 import { useState, useEffect, FormEvent, ChangeEvent, useMemo } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Image from "next/image";
