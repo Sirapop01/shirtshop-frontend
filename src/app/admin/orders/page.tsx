@@ -7,6 +7,59 @@ import { useThaiLocations } from "@/lib/useThaiLocations";
 import api, { buildUrl } from "@/lib/api";
 import axios, { AxiosError } from "axios";
 
+// SweetAlert2
+import Swal from "sweetalert2";
+import withReactContent from "sweetalert2-react-content";
+const MySwal = withReactContent(Swal);
+
+/* ---------- toast / confirm helpers (แบบเดียวกับหน้า Products) ---------- */
+function toastSuccess(text: string) {
+  MySwal.fire({
+    icon: "success",
+    title: text,
+    timer: 1400,
+    showConfirmButton: false,
+    position: "top-end",
+    toast: true,
+  });
+}
+function toastError(text: string) {
+  MySwal.fire({
+    icon: "error",
+    title: text,
+    timer: 2000,
+    showConfirmButton: false,
+    position: "top-end",
+    toast: true,
+  });
+}
+async function confirmAction({
+  title,
+  text,
+  confirmText = "ยืนยัน",
+  confirmColor = "#16a34a",
+  icon = "question",
+}: {
+  title: string;
+  text?: string;
+  confirmText?: string;
+  confirmColor?: string;
+  icon?: "warning" | "question" | "info" | "success" | "error";
+}) {
+  const res = await MySwal.fire({
+    title,
+    text,
+    icon,
+    showCancelButton: true,
+    confirmButtonText: confirmText,
+    cancelButtonText: "ยกเลิก",
+    focusCancel: true,
+    reverseButtons: true,
+    confirmButtonColor: confirmColor,
+  });
+  return res.isConfirmed;
+}
+
 /* ---------------- Types ---------------- */
 type OrderStatus =
   | "PENDING_PAYMENT"
@@ -84,7 +137,13 @@ type ShippingLike = {
 const fmtBaht = (n: number) => `฿${n.toLocaleString("th-TH")}`;
 
 const initialsOf = (name: string) =>
-  name.trim().split(/\s+/).map(w => w[0]).join("").slice(0,2).toUpperCase();
+  name
+    .trim()
+    .split(/\s+/)
+    .map((w) => w[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
 
 const Chip: React.FC<React.PropsWithChildren> = ({ children }) => (
   <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium text-gray-700">
@@ -92,7 +151,7 @@ const Chip: React.FC<React.PropsWithChildren> = ({ children }) => (
   </span>
 );
 
-type UserLite = { id: string; fullName: string; email: string; address?: Address | null; };
+type UserLite = { id: string; fullName: string; email: string; address?: Address | null };
 
 /* ---------------- Utils ---------------- */
 const THB = new Intl.NumberFormat("th-TH", {
@@ -143,7 +202,7 @@ function Th({ children, className = "" }: { children: React.ReactNode; className
 /* ============================================================ */
 
 export default function AdminOrdersPage() {
-  const { token } = useAuth(); // ไม่ต้องใช้ประกอบ headers แล้ว แต่อ่านไว้กันยิงตอนยังไม่ login
+  const { token } = useAuth(); // กันยิงตอนยังไม่ login
 
   // table state
   const [page, setPage] = useState(0);
@@ -173,38 +232,41 @@ export default function AdminOrdersPage() {
     "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODQiIGhlaWdodD0iODQiIHZpZXdCb3g9IjAgMCA4NCA4NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iODQiIGhlaWdodD0iODQiIHJ4PSIxMiIgZmlsbD0iI2Y1ZjVmNSIvPjxwYXRoIGQ9Ik00OSA0MUwzOSAzMSAyOSA0MSIgc3Ryb2tlPSIjY2NjIiBzdHJva2Utd2lkdGg9IjMiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjxyZWN0IHg9IjIwIiB5PSIyMCIgd2lkdGg9IjQ0IiBoZWlnaHQ9IjQ0IiByeD0iOCIgc3Rya2U9IiNkZGQiIHN0cm9rZS13aWR0aD0iMiIvPjwvc3ZnPg==";
 
   const { getProvinceNameById, getAmphureNameById } = useThaiLocations();
-  const formatShipping = useCallback((sa?: ShippingLike) => {
-    if (!sa) return { header: "", lines: [] as string[] };
+  const formatShipping = useCallback(
+    (sa?: ShippingLike) => {
+      if (!sa) return { header: "", lines: [] as string[] };
 
-    let dist = sa.districtName?.trim() || "";
-    let prov = sa.provinceName?.trim() || "";
+      let dist = sa.districtName?.trim() || "";
+      let prov = sa.provinceName?.trim() || "";
 
-    const maybeDist = sa.district?.toString().trim();
-    const maybeProv = sa.province?.toString().trim();
+      const maybeDist = sa.district?.toString().trim();
+      const maybeProv = sa.province?.toString().trim();
 
-    if (!dist && maybeDist) {
-      dist = /^\d+$/.test(maybeDist) ? (getAmphureNameById(maybeDist) || "") : maybeDist;
-    }
-    if (!prov && maybeProv) {
-      prov = /^\d+$/.test(maybeProv) ? (getProvinceNameById(maybeProv) || "") : maybeProv;
-    }
+      if (!dist && maybeDist) {
+        dist = /^\d+$/.test(maybeDist) ? getAmphureNameById(maybeDist) || "" : maybeDist;
+      }
+      if (!prov && maybeProv) {
+        prov = /^\d+$/.test(maybeProv) ? getProvinceNameById(maybeProv) || "" : maybeProv;
+      }
 
-    const sub = sa.subDistrict ?? sa.subdistrict ?? "";
-    const zip = sa.postalCode ?? sa.postcode ?? "";
-    const lineA = sa.line1 || "";
-    const lineB = [sub && `ต.${sub}`, dist && `อ.${dist}`, prov && `จ.${prov}`, zip]
-      .filter(Boolean)
-      .join(" ");
+      const sub = sa.subDistrict ?? sa.subdistrict ?? "";
+      const zip = sa.postalCode ?? sa.postcode ?? "";
+      const lineA = sa.line1 || "";
+      const lineB = [sub && `ต.${sub}`, dist && `อ.${dist}`, prov && `จ.${prov}`, zip]
+        .filter(Boolean)
+        .join(" ");
 
-    return {
-      header: sa.recipientName ?? sa.fullName ?? "",
-      lines: [sa.phone || "", lineA, lineB].filter(Boolean),
-    };
-  }, [getAmphureNameById, getProvinceNameById]);
+      return {
+        header: sa.recipientName ?? sa.fullName ?? "",
+        lines: [sa.phone || "", lineA, lineB].filter(Boolean),
+      };
+    },
+    [getAmphureNameById, getProvinceNameById]
+  );
 
   /* ------------- fetch orders ------------- */
   const load = useCallback(async () => {
-    if (!token) return; // ยังไม่ได้ auth
+    if (!token) return;
     setLoading(true);
     setErr("");
     try {
@@ -224,6 +286,7 @@ export default function AdminOrdersPage() {
         msg = e.message || msg;
       }
       setErr(msg);
+      toastError(msg);
     } finally {
       setLoading(false);
     }
@@ -281,8 +344,8 @@ export default function AdminOrdersPage() {
   const rows = useMemo<Order[]>(() => {
     const anyData = data as any;
     if (Array.isArray(anyData?.content)) return anyData.content as Order[];
-    if (Array.isArray(anyData?.items))   return anyData.items as Order[];
-    if (Array.isArray(anyData?.data))    return anyData.data as Order[];
+    if (Array.isArray(anyData?.items)) return anyData.items as Order[];
+    if (Array.isArray(anyData?.data)) return anyData.data as Order[];
     return [];
   }, [data]);
 
@@ -292,7 +355,9 @@ export default function AdminOrdersPage() {
     (async () => {
       const list = await Promise.all(ids.map((id) => fetchUser(id)));
       const patch: Record<string, UserLite> = {};
-      list.forEach((u) => { if (u) patch[u.id] = u; });
+      list.forEach((u) => {
+        if (u) patch[u.id] = u;
+      });
       if (Object.keys(patch).length) setUserMap((prev) => ({ ...prev, ...patch }));
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -306,12 +371,12 @@ export default function AdminOrdersPage() {
     );
   }, [rows, query]);
 
-  const kpiTotal    = (data?.totalElements ?? rows.length);
-  const kpiAwait    = filtered.filter((o) => o.status === "SLIP_UPLOADED").length;
-  const kpiPaid     = filtered.filter((o) => o.status === "PAID").length;
+  const kpiTotal = data?.totalElements ?? rows.length;
+  const kpiAwait = filtered.filter((o) => o.status === "SLIP_UPLOADED").length;
+  const kpiPaid = filtered.filter((o) => o.status === "PAID").length;
   const kpiRejected = filtered.filter((o) => o.status === "REJECTED").length;
 
-  /* ------------- actions ------------- */
+  /* ------------- actions (ใช้ SweetAlert2) ------------- */
   async function patchStatus(
     orderId: string,
     next: "PAID" | "REJECTED" | "CANCELED",
@@ -322,7 +387,7 @@ export default function AdminOrdersPage() {
         status: next,
         rejectReason: reason ?? null,
       });
-      load();
+      await load();
     } catch (e: unknown) {
       let msg = "Patch failed";
       if (axios.isAxiosError(e)) {
@@ -335,20 +400,54 @@ export default function AdminOrdersPage() {
     }
   }
 
-  const approve = (o: Order) => {
-    if (!confirm(`ยืนยันรับชำระออเดอร์ #${o.id.slice(-6)} จำนวน ${THB.format(o.total)} ?`)) return;
-    patchStatus(o.id, "PAID").catch((e) => alert(e.message));
+  const approve = async (o: Order) => {
+    const ok = await confirmAction({
+      title: `ยืนยันรับชำระออเดอร์ #${o.id.slice(-6)}`,
+      text: `ยอดชำระ ${THB.format(o.total)}`,
+      confirmText: "ยืนยันรับชำระ",
+      confirmColor: "#16a34a",
+      icon: "question",
+    });
+    if (!ok) return;
+
+    try {
+      await patchStatus(o.id, "PAID");
+      toastSuccess("อนุมัติการชำระเงินแล้ว");
+    } catch (e: any) {
+      toastError(e.message || "ไม่สามารถอนุมัติได้");
+    }
   };
 
-  const reject = (o: Order) => {
-    const reason = prompt(`เหตุผลการปฏิเสธสำหรับ #${o.id.slice(-6)}`, o.rejectReason ?? "");
-    if (reason === null) return;
-    patchStatus(o.id, "REJECTED", reason || undefined).catch((e) => alert(e.message));
+  const reject = async (o: Order) => {
+    const { value: reason, isConfirmed } = await MySwal.fire({
+      title: `ปฏิเสธออเดอร์ #${o.id.slice(-6)}`,
+      input: "textarea",
+      inputLabel: "เหตุผล (ถ้ามี)",
+      inputPlaceholder: "พิมพ์เหตุผลที่ปฏิเสธ...",
+      inputValue: o.rejectReason ?? "",
+      inputAttributes: { "aria-label": "Reject reason" },
+      showCancelButton: true,
+      confirmButtonText: "ปฏิเสธออเดอร์",
+      confirmButtonColor: "#dc2626",
+      cancelButtonText: "ยกเลิก",
+      reverseButtons: true,
+      focusCancel: true,
+    });
+    if (!isConfirmed) return;
+
+    try {
+      await patchStatus(o.id, "REJECTED", reason || undefined);
+      toastSuccess("ปฏิเสธออเดอร์แล้ว");
+    } catch (e: any) {
+      toastError(e.message || "ไม่สามารถปฏิเสธได้");
+    }
   };
 
   async function onView(o: Order) {
     try {
-      const res = await api.get(`/api/admin/orders/${o.id}`, { headers: { "Cache-Control": "no-cache" } });
+      const res = await api.get(`/api/admin/orders/${o.id}`, {
+        headers: { "Cache-Control": "no-cache" },
+      });
       const full = res.data as Order;
       setViewOrder(full);
 
@@ -361,15 +460,32 @@ export default function AdminOrdersPage() {
       let msg = "โหลดรายละเอียดไม่สำเร็จ";
       if (axios.isAxiosError(e)) msg = e.response?.data?.message || e.message || msg;
       else if (e instanceof Error) msg = e.message || msg;
-      alert(msg);
+      toastError(msg);
     }
   }
 
-  function onCancel(o: Order) {
-    const reason = prompt(`ยืนยันยกเลิกออเดอร์ #${o.id.slice(-6)} ?\nระบุเหตุผล (ไม่บังคับ)`, "");
-    if (reason === null) return;
-    patchStatus(o.id, "CANCELED", reason || undefined).catch((e) => alert(e.message));
-  }
+  const onCancel = async (o: Order) => {
+    const { value: reason, isConfirmed } = await MySwal.fire({
+      title: `ยกเลิกออเดอร์ #${o.id.slice(-6)} ?`,
+      input: "textarea",
+      inputLabel: "เหตุผล (ถ้ามี)",
+      inputPlaceholder: "พิมพ์เหตุผลการยกเลิก...",
+      showCancelButton: true,
+      confirmButtonText: "ยืนยันยกเลิก",
+      confirmButtonColor: "#dc2626",
+      cancelButtonText: "กลับ",
+      reverseButtons: true,
+      focusCancel: true,
+    });
+    if (!isConfirmed) return;
+
+    try {
+      await patchStatus(o.id, "CANCELED", reason || undefined);
+      toastSuccess("ยกเลิกออเดอร์แล้ว");
+    } catch (e: any) {
+      toastError(e.message || "ยกเลิกไม่สำเร็จ");
+    }
+  };
 
   /* ------------- UI ------------- */
   if (loading) {
@@ -567,14 +683,14 @@ export default function AdminOrdersPage() {
                         <>
                           <button
                             type="button"
-                            onClick={() => approve(o)}
+                            onClick={() => void approve(o)}
                             className="inline-flex items-center justify-center rounded-lg bg-green-50 px-3 py-1.5 text-xs font-medium text-green-600 shadow-sm hover:bg-green-100 transition cursor-pointer"
                           >
                             Approve
                           </button>
                           <button
                             type="button"
-                            onClick={() => reject(o)}
+                            onClick={() => void reject(o)}
                             className="inline-flex items-center justify-center rounded-lg bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 shadow-sm hover:bg-red-100 transition cursor-pointer"
                           >
                             Reject
@@ -586,14 +702,14 @@ export default function AdminOrdersPage() {
                         <>
                           <button
                             type="button"
-                            onClick={() => onView(o)}
+                            onClick={() => void onView(o)}
                             className="inline-flex items-center justify-center rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-600 shadow-sm hover:bg-blue-100 transition cursor-pointer"
                           >
                             View
                           </button>
                           <button
                             type="button"
-                            onClick={() => onCancel(o)}
+                            onClick={() => void onCancel(o)}
                             className="inline-flex items-center justify-center rounded-lg bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 shadow-sm hover:bg-red-100 transition cursor-pointer"
                           >
                             Cancel
@@ -631,7 +747,8 @@ export default function AdminOrdersPage() {
       {/* Footer */}
       <div className="flex flex-col gap-3 text-sm text-gray-600 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          Showing {rows.length} of {data.totalElements ?? rows.length} orders • หน้า {data.number + 1}/{data.totalPages || 1}
+          Showing {rows.length} of {data.totalElements ?? rows.length} orders • หน้า{" "}
+          {data.number + 1}/{data.totalPages || 1}
         </div>
         <div className="flex gap-2">
           <button
@@ -692,7 +809,13 @@ export default function AdminOrdersPage() {
                       <div className="min-w-0">
                         <div className="truncate font-medium text-gray-900">{name}</div>
                         <div className="truncate text-xs text-gray-500">
-                          {mail ? (<a href={`mailto:${mail}`} className="hover:underline">{mail}</a>) : (<span>—</span>)}
+                          {mail ? (
+                            <a href={`mailto:${mail}`} className="hover:underline">
+                              {mail}
+                            </a>
+                          ) : (
+                            <span>—</span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -744,15 +867,19 @@ export default function AdminOrdersPage() {
                               src={imgSrc}
                               alt={it.name || "product"}
                               className="h-full w-full object-cover"
-                              onError={(e) => { (e.currentTarget as HTMLImageElement).src = IMG_FALLBACK; }}
+                              onError={(e) => {
+                                (e.currentTarget as HTMLImageElement).src = IMG_FALLBACK;
+                              }}
                             />
                           </div>
                           <div className="min-w-0">
                             <div className="truncate font-medium">{it.name ?? it.productId}</div>
                             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-600">
                               {it.color && <Chip>สี {it.color}</Chip>}
-                              {it.size  && <Chip>ไซส์ {it.size}</Chip>}
-                              <span className="text-gray-500">{fmtBaht(price)} × {qty}</span>
+                              {it.size && <Chip>ไซส์ {it.size}</Chip>}
+                              <span className="text-gray-500">
+                                {fmtBaht(price)} × {qty}
+                              </span>
                             </div>
                           </div>
                         </div>
@@ -780,7 +907,9 @@ export default function AdminOrdersPage() {
                         <span className="text-xs text-gray-400">Shipping address</span>
                       </div>
                       <div className="mt-2 space-y-1 text-sm text-gray-700">
-                        {ship.lines.map((ln, i) => (<div key={i}>{ln}</div>))}
+                        {ship.lines.map((ln, i) => (
+                          <div key={i}>{ln}</div>
+                        ))}
                       </div>
                     </div>
                   );
@@ -790,9 +919,24 @@ export default function AdminOrdersPage() {
 
             {/* Totals */}
             <div className="flex justify-end gap-6 px-6 pb-6 text-sm">
-              <div>สินค้า <span className="font-semibold">{viewOrder.subTotal.toLocaleString("th-TH")}</span></div>
-              <div>ส่ง <span className="font-semibold">{viewOrder.shippingFee.toLocaleString("th-TH")}</span></div>
-              <div>รวม <span className="font-semibold">{viewOrder.total.toLocaleString("th-TH")}</span></div>
+              <div>
+                สินค้า{" "}
+                <span className="font-semibold">
+                  {viewOrder.subTotal.toLocaleString("th-TH")}
+                </span>
+              </div>
+              <div>
+                ส่ง{" "}
+                <span className="font-semibold">
+                  {viewOrder.shippingFee.toLocaleString("th-TH")}
+                </span>
+              </div>
+              <div>
+                รวม{" "}
+                <span className="font-semibold">
+                  {viewOrder.total.toLocaleString("th-TH")}
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -813,7 +957,9 @@ function formatAddress(a?: Address | null) {
     a.district && `อ.${a.district}`,
     a.province && `จ.${a.province}`,
     a.postcode,
-  ].filter(Boolean).join(" ");
+  ]
+    .filter(Boolean)
+    .join(" ");
   return parts;
 }
 

@@ -1,9 +1,63 @@
+// src/app/admin/customers/page.tsx
 "use client";
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import api from "@/lib/api";
 import axios, { AxiosError } from "axios";
+
+// SweetAlert2
+import Swal from "sweetalert2";
+import withReactContent from "sweetalert2-react-content";
+const MySwal = withReactContent(Swal);
+
+/* ---- Toast & Confirm helpers ---- */
+function toastSuccess(text: string) {
+  MySwal.fire({
+    icon: "success",
+    title: text,
+    timer: 1400,
+    showConfirmButton: false,
+    position: "top-end",
+    toast: true,
+  });
+}
+function toastError(text: string) {
+  MySwal.fire({
+    icon: "error",
+    title: text,
+    timer: 2000,
+    showConfirmButton: false,
+    position: "top-end",
+    toast: true,
+  });
+}
+async function confirmAction({
+  title,
+  text,
+  confirmText = "ลบเลย",
+  confirmColor = "#dc2626",
+  icon = "warning",
+}: {
+  title: string;
+  text?: string;
+  confirmText?: string;
+  confirmColor?: string;
+  icon?: "warning" | "question" | "info" | "success" | "error";
+}) {
+  const res = await MySwal.fire({
+    title,
+    text,
+    icon,
+    showCancelButton: true,
+    confirmButtonText: confirmText,
+    cancelButtonText: "ยกเลิก",
+    reverseButtons: true,
+    focusCancel: true,
+    confirmButtonColor: confirmColor,
+  });
+  return res.isConfirmed;
+}
 
 type CustomerItem = {
   id: string;
@@ -24,9 +78,7 @@ export default function CustomersPage() {
     setLoading(true);
     setErr("");
     try {
-      // ✅ ใช้ axios instance จาก lib/api.ts (baseURL จาก NEXT_PUBLIC_API_BASE + แนบ token อัตโนมัติ)
       const res = await api.get<CustomerItem[]>("/api/customers", {
-        // ถ้าอยากกัน cache ฝั่ง browser เพิ่ม header นี้ได้ (ไม่จำเป็นก็ลบออกได้)
         headers: { "Cache-Control": "no-cache" },
       });
       setItems(res.data ?? []);
@@ -39,6 +91,7 @@ export default function CustomersPage() {
         msg = e.message || msg;
       }
       setErr(String(msg));
+      toastError(String(msg));
     } finally {
       setLoading(false);
     }
@@ -75,15 +128,37 @@ export default function CustomersPage() {
   }, []);
 
   const onDelete = async (user: CustomerItem) => {
-    const ok = window.confirm(`Delete user "${user.name || user.email}" ?`);
+    const ok = await confirmAction({
+      title: `ลบผู้ใช้ "${user.name || user.email}" ?`,
+      text: "การลบไม่สามารถย้อนกลับได้",
+      confirmText: "ลบผู้ใช้",
+      confirmColor: "#dc2626",
+      icon: "warning",
+    });
     if (!ok) return;
 
     try {
-      // ✅ ใช้ api.delete แทน fetch + withAuth
+      // ❌ ห้าม await ตรงนี้
+      MySwal.fire({
+        title: "กำลังลบ...",
+        allowOutsideClick: false,
+        allowEscapeKey: false,
+        didOpen: () => {
+          Swal.showLoading(); // หรือ MySwal.showLoading() ก็ได้
+        },
+        showConfirmButton: false,
+      });
+
+      // ยิง API ได้ทันที
       const res = await api.delete(`/api/customers/${user.id}`);
-      if (res.status < 200 || res.status >= 300) throw new Error(`Delete failed (${res.status})`);
+      if (res.status < 200 || res.status >= 300) {
+        throw new Error(`Delete failed (${res.status})`);
+      }
+
       setItems((prev) => prev.filter((x) => x.id !== user.id));
       setOpenMenuId(null);
+
+      toastSuccess("ลบผู้ใช้เรียบร้อย");
     } catch (e: unknown) {
       let msg = "Delete failed";
       if (axios.isAxiosError(e)) {
@@ -92,7 +167,9 @@ export default function CustomersPage() {
       } else if (e instanceof Error) {
         msg = e.message || msg;
       }
-      alert(msg);
+      toastError(msg);
+    } finally {
+      Swal.close(); // ปิดโหลดไม่ว่าผลจะสำเร็จหรือพลาด
     }
   };
 
