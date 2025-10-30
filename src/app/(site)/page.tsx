@@ -7,7 +7,7 @@ import SectionTitle from "@/components/shared/SectionTitle";
 import ProductGrid from "@/components/product/ProductGrid";
 import FilterControls from "@/components/product/FilterControls";
 import { unstable_noStore as noStore } from "next/cache";
-
+import HeroBrandName from "@/components/home/HeroBrandName"; 
 // กัน cache ฝั่ง server/ui ให้หมด
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -105,7 +105,7 @@ export default async function HomePage({
                 {/* แผงข้อความโปร่งใส (ช่วยให้อ่านง่ายบนจอเล็ก) */}
                 <div className="mx-auto max-w-3xl text-center rounded-2xl sm:rounded-3xl/none sm:bg-transparent sm:backdrop-blur-0 sm:p-0 bg-black/20 backdrop-blur-sm p-6">
                     <h1 className="text-5xl sm:text-6xl font-extrabold tracking-tight text-white">
-                    StyleWhere Collection
+                    <HeroBrandName /> Collection
                     </h1>
                     <p className="mt-6 mx-auto max-w-2xl text-base sm:text-lg leading-8 text-white/90">
                     ค้นพบสไตล์ที่เป็นคุณกับคอลเลคชั่นเสื้อผ้าใหม่ล่าสุดของเรา ไม่ว่าจะเป็นเสื้อยืดพิมพ์ลายกราฟิกสุดเท่ หรือเสื้อโปโลสุดคลาสสิก เรามีทุกอย่างให้คุณเลือกสรร

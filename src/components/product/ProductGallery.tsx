@@ -1,101 +1,141 @@
+// src/components/product/ProductGallery.tsx
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 interface ProductGalleryProps {
-  images: string[];
-  alt: string;
+  images?: string[];
+  alt?: string;
 }
 
-export default function ProductGallery({ images = [], alt }: ProductGalleryProps) {
-  const [activeIndex, setActiveIndex] = useState(0);
-  const activeImage = images[activeIndex] || 'https://placehold.co/600x750?text=No+Image';
+const PLACEHOLDER = "/images/placeholder-product.png";
 
-  // State สำหรับฟังก์ชันซูม
+export default function ProductGallery({
+  images = [],
+  alt = "Product image",
+}: ProductGalleryProps) {
+  const cleaned = useMemo(
+    () => (images && images.length ? images.filter(Boolean) : [PLACEHOLDER]),
+    [images]
+  );
+  const [index, setIndex] = useState(0);
+
+  // --- hover-zoom แบบเดิม: ซูมตามตำแหน่งเมาส์ ---
   const [zoom, setZoom] = useState(false);
-  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [pos, setPos] = useState({ x: 50, y: 50 }); // percent
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    const { left, top, width, height } = e.currentTarget.getBoundingClientRect();
-    const x = ((e.clientX - left) / width) * 100;
-    const y = ((e.clientY - top) / height) * 100;
-    setPosition({ x, y });
+  const onMove: React.MouseEventHandler<HTMLDivElement> = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * 100;
+    const y = ((e.clientY - r.top) / r.height) * 100;
+    setPos({ x, y });
   };
 
+  // เลื่อนรูปย่อที่เลือกให้อยู่ในวิวดั้งเดิม
+  const railRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el =
+      railRef.current?.querySelector<HTMLButtonElement>(`[data-thumb="${index}"]`);
+    el?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+  }, [index]);
+
   return (
-    // Container หลักที่เปลี่ยน Layout ตามขนาดหน้าจอ
-    <div className="flex flex-col md:flex-row-reverse md:gap-6">
-      
-      {/* รูปภาพหลัก พร้อมฟังก์ชันซูม */}
-      <div className="flex-1 relative aspect-[4/5] overflow-hidden rounded-lg bg-gray-100 mb-4 md:mb-0">
+    <div className="relative">
+      {/* รูปหลัก: กว้างเต็มคอลัมน์ + ซูมตามเมาส์แบบเดิม */}
+      <div className="group relative w-full aspect-square overflow-hidden rounded-2xl border border-gray-200 bg-white">
         <div
-            className="w-full h-full"
-            onMouseEnter={() => setZoom(true)}
-            onMouseLeave={() => setZoom(false)}
-            onMouseMove={handleMouseMove}
+          className="absolute inset-0 w-full h-full"
+          onMouseEnter={() => setZoom(true)}
+          onMouseLeave={() => setZoom(false)}
+          onMouseMove={onMove}
+          aria-hidden
         >
-            <Image
-                key={activeIndex} // ใช้ key เพื่อ force re-render และให้ transition ทำงานเมื่อเปลี่ยนรูป
-                src={activeImage}
-                alt={alt}
-                fill
-                sizes="(max-width: 768px) 100vw, 75vw"
-                className="object-cover transition-transform duration-300 ease-in-out"
-                style={{
-                    transformOrigin: `${position.x}% ${position.y}%`,
-                    transform: zoom ? 'scale(1.75)' : 'scale(1)',
-                }}
-                onError={(e) => {
-                    e.currentTarget.src = 'https://placehold.co/600x750?text=Image+Error';
-                }}
-            />
+          <Image
+            src={cleaned[index] || PLACEHOLDER}
+            alt={alt}
+            fill
+            sizes="(min-width:1024px) 720px, 100vw"
+            className="object-contain p-2 transition-transform duration-300 ease-out will-change-transform"
+            style={{
+              // โฟกัสซูมไปยังตำแหน่งเมาส์
+              transformOrigin: `${pos.x}% ${pos.y}%`,
+              // ถ้าอยากซูมน้อยลง/มากขึ้น ปรับค่านี้ได้ เช่น 1.2 หรือ 1.1
+              transform: zoom ? "scale(1.75)" : "scale(1)",
+            }}
+            unoptimized={cleaned[index]?.startsWith("data:")}
+            onError={(ev) => {
+              ev.currentTarget.src = PLACEHOLDER;
+            }}
+            priority
+          />
         </div>
       </div>
 
-      {/* Thumbnails */}
-      {/* Desktop: แสดงแนวตั้ง */}
-      <div className="hidden md:flex md:flex-col gap-3 w-20">
-        {images.map((image, index) => (
-          <button
-            key={index}
-            onClick={() => setActiveIndex(index)}
-            className={`flex-shrink-0 w-20 h-20 rounded-lg overflow-hidden border-2 transition-colors ${
-              activeIndex === index ? 'border-black' : 'border-gray-200'
-            }`}
-          >
-            <Image
-              src={image}
-              alt={`${alt} thumbnail ${index + 1}`}
-              width={80}
-              height={80}
-              className="w-full h-full object-cover"
-            />
-          </button>
-        ))}
-      </div>
-      
-      {/* Mobile: แสดงแนวนอน */}
-      <div className="md:hidden flex gap-2 overflow-x-auto pb-2">
-        {images.map((image, index) => (
-          <button
-            key={index}
-            onClick={() => setActiveIndex(index)}
-            className={`flex-shrink-0 w-20 h-20 rounded-lg overflow-hidden border-2 transition-colors ${
-              activeIndex === index ? 'border-black' : 'border-gray-200'
-            }`}
-          >
-            <Image
-              src={image}
-              alt={`${alt} thumbnail ${index + 1}`}
-              width={80}
-              height={80}
-              className="w-full h-full object-cover"
-            />
-          </button>
-        ))}
+      {/* แถบรูปย่อเดสก์ท็อป: ลอยซ้าย ไม่กินความกว้างรูปหลัก */}
+      <div
+        ref={railRef}
+        className="hidden md:flex flex-col gap-2 absolute -left-[112px] top-0 max-h-[560px] overflow-auto rounded-2xl border border-gray-200 bg-white p-2"
+      >
+        {cleaned.map((src, i) => {
+          const active = i === index;
+          return (
+            <button
+              key={src + i}
+              data-thumb={i}
+              onClick={() => setIndex(i)}
+              className={[
+                "relative aspect-square w-[88px] overflow-hidden rounded-xl ring-1 ring-gray-200 transition",
+                active ? "ring-2 ring-gray-900" : "hover:ring-gray-300",
+              ].join(" ")}
+              aria-current={active ? "true" : undefined}
+              title={`รูปที่ ${i + 1}`}
+            >
+              <Image
+                src={src || PLACEHOLDER}
+                alt={`${alt} thumbnail ${i + 1}`}
+                fill
+                sizes="88px"
+                className="object-cover"
+                unoptimized={src?.startsWith("data:")}
+                onError={(ev) => {
+                  ev.currentTarget.src = PLACEHOLDER;
+                }}
+              />
+            </button>
+          );
+        })}
       </div>
 
+      {/* แถบรูปย่อมือถือ: แนวนอนใต้รูป */}
+      <div className="md:hidden mt-3 flex gap-2 overflow-x-auto rounded-2xl border border-gray-200 bg-white p-2">
+        {cleaned.map((src, i) => {
+          const active = i === index;
+          return (
+            <button
+              key={src + i}
+              onClick={() => setIndex(i)}
+              className={[
+                "relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-xl ring-1 ring-gray-200 transition",
+                active ? "ring-2 ring-gray-900" : "hover:ring-gray-300",
+              ].join(" ")}
+              aria-current={active ? "true" : undefined}
+            >
+              <Image
+                src={src || PLACEHOLDER}
+                alt={`${alt} thumbnail ${i + 1}`}
+                fill
+                sizes="80px"
+                className="object-cover"
+                unoptimized={src?.startsWith("data:")}
+                onError={(ev) => {
+                  ev.currentTarget.src = PLACEHOLDER;
+                }}
+              />
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
