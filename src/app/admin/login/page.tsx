@@ -7,6 +7,7 @@ import Image from "next/image";
 import axios, { AxiosError } from "axios";
 import api from "@/lib/api";                 // ✅ ใช้ axios instance ที่ผูก .env + แนบ token อัตโนมัติ (ถ้ามี)
 import { useAuth } from "@/context/AuthContext";
+import HeroLogo from "@/components/home/HeroLogo"; 
 
 export default function AdminLoginPage() {
   const [email, setEmail] = useState("admin@gmail.com");
@@ -71,7 +72,7 @@ export default function AdminLoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-gray-100">
       <div className="w-full max-w-md rounded-lg bg-white p-8 shadow-xl">
         <div className="mb-6 flex justify-center">
-          <Image src="/logo.png" alt="StyleWhere Logo" width={160} height={48} />
+          <HeroLogo width={160} height={48} />
         </div>
         <h1 className="mb-6 text-center text-2xl font-bold text-gray-800">Administrator Login</h1>
 

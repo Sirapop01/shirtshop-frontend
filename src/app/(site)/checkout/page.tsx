@@ -8,6 +8,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useThaiLocations } from "@/lib/useThaiLocations";
 
+// ✅ SweetAlert
+import Swal from "sweetalert2";
+import withReactContent from "sweetalert2-react-content";
+const MySwal = withReactContent(Swal);
+
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 /* ---------- Types ---------- */
@@ -42,14 +47,12 @@ const preferName = (name?: string | null, code?: string | null) =>
 
 type AnyAddr = {
   id?: string;
-  // ชื่อ/เบอร์ + บรรทัดแรก
   fullName?: string | null;
-  recipientName?: string | null; // snapshot order
+  recipientName?: string | null;
   phone?: string | null;
-  addressLine1?: string | null; // จากหน้าที่อยู่
-  line1?: string | null; // snapshot order
+  addressLine1?: string | null;
+  line1?: string | null;
   line2?: string | null;
-  // เขต/จังหวัด (รองรับทั้ง response ของ address และ snapshot order)
   subdistrict?: string | null;
   subDistrict?: string | null;
   district?: string | null;
@@ -145,7 +148,7 @@ export default function CheckoutPage() {
 
   /* ----- load addresses (only before order is created) ----- */
   useEffect(() => {
-    if (order) return; // freeze after created
+    if (order) return;
     let stop = false;
     const load = async () => {
       setAddrLoading(true);
@@ -178,7 +181,10 @@ export default function CheckoutPage() {
     const exp = orderDetail?.expiresAt || order?.expiresAt;
     if (exp) {
       t = setInterval(() => {
-        const diff = Math.max(0, Math.floor((+new Date(exp) - Date.now()) / 1000));
+        const diff = Math.max(
+          0,
+          Math.floor((+new Date(exp) - Date.now()) / 1000)
+        );
         setTimeLeft(diff);
       }, 500);
     } else {
@@ -231,7 +237,10 @@ export default function CheckoutPage() {
       return {
         canUploadSlip: true,
         disabledReason: "",
-        banner: { tone: "success" as const, text: "พร้อมแนบสลิปเพื่อยืนยันการชำระ" },
+        banner: {
+          tone: "success" as const,
+          text: "พร้อมแนบสลิปเพื่อยืนยันการชำระ",
+        },
       };
     if (st === "SLIP_UPLOADED")
       return {
@@ -309,6 +318,7 @@ export default function CheckoutPage() {
   const uploadSlip = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!order || !canUploadSlip) return;
+
     const fileInput = e.currentTarget.elements.namedItem(
       "slip"
     ) as HTMLInputElement;
@@ -317,18 +327,43 @@ export default function CheckoutPage() {
       setSlipError("กรุณาเลือกไฟล์สลิป");
       return;
     }
+
     setUploading(true);
+
+    // ✅ เปิด SweetAlert โหมดโหลด (ไม่ await)
+    MySwal.fire({
+      title: "กำลังอัปโหลด...",
+      text: "โปรดรอสักครู่",
+      allowOutsideClick: false,
+      allowEscapeKey: false,
+      didOpen: () => {
+        MySwal.showLoading();
+      },
+    });
+
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const res = await authFetch(
-        `${API}/api/orders/${order.orderId}/slip`,
-        { method: "POST", body: fd }
-      );
+
+      const res = await authFetch(`${API}/api/orders/${order.orderId}/slip`, {
+        method: "POST",
+        body: fd,
+      });
+
+      // ปิดโหลดก่อน
+      MySwal.close();
+
       if (!res.ok) {
-        setSlipError(`อัปโหลดไม่สำเร็จ: ${await res.text()}`);
+        const msg = await res.text();
+        await MySwal.fire({
+          icon: "error",
+          title: "อัปโหลดไม่สำเร็จ",
+          text: msg || "ลองใหม่อีกครั้ง",
+          confirmButtonText: "ตกลง",
+        });
         return;
       }
+
       const data = (await res.json()) as {
         status: OrderStatus;
         paymentSlipUrl?: string;
@@ -338,7 +373,22 @@ export default function CheckoutPage() {
           ? { ...prev, status: data.status, paymentSlipUrl: data.paymentSlipUrl }
           : prev
       );
-      alert("อัปโหลดสลิปเรียบร้อย รอแอดมินยืนยัน");
+
+      await MySwal.fire({
+        icon: "success",
+        title: "อัปโหลดสลิปเรียบร้อย",
+        text: "กรุณารอแอดมินตรวจสอบ",
+        timer: 1400,
+        showConfirmButton: false,
+      });
+    } catch (err: any) {
+      MySwal.close();
+      await MySwal.fire({
+        icon: "error",
+        title: "เกิดข้อผิดพลาด",
+        text: err?.message || "ไม่สามารถอัปโหลดได้",
+        confirmButtonText: "ตกลง",
+      });
     } finally {
       setUploading(false);
     }
@@ -351,7 +401,8 @@ export default function CheckoutPage() {
       currency: "THB",
     }).format(n || 0);
 
-  const summaryItems = order && orderDetail?.items?.length ? orderDetail.items : null;
+  const summaryItems =
+    order && orderDetail?.items?.length ? orderDetail.items : null;
   const chosenAddress: AnyAddr | null =
     orderDetail?.shippingAddress ||
     (addresses.find((a) => a.id === selectedAddressId) ?? null);
@@ -392,9 +443,13 @@ export default function CheckoutPage() {
                           <div className="font-medium text-zinc-900">
                             {n.fullName || "-"}
                           </div>
-                          <div className="text-sm text-zinc-500">· {n.phone || "-"}</div>
+                          <div className="text-sm text-zinc-500">
+                            · {n.phone || "-"}
+                          </div>
                           {n.addressLine1 && (
-                            <div className="text-sm text-zinc-700">{n.addressLine1}</div>
+                            <div className="text-sm text-zinc-700">
+                              {n.addressLine1}
+                            </div>
                           )}
                           {n.line2 && (
                             <div className="text-sm text-zinc-700">{n.line2}</div>
@@ -443,9 +498,13 @@ export default function CheckoutPage() {
                             <div className="font-medium text-zinc-900">
                               {n.fullName || "-"}
                             </div>
-                            <div className="text-sm text-zinc-500">· {n.phone || "-"}</div>
+                            <div className="text-sm text-zinc-500">
+                              · {n.phone || "-"}
+                            </div>
                             {n.addressLine1 && (
-                              <div className="text-sm text-zinc-700">{n.addressLine1}</div>
+                              <div className="text-sm text-zinc-700">
+                                {n.addressLine1}
+                              </div>
                             )}
                             {n.line2 && (
                               <div className="text-sm text-zinc-700">{n.line2}</div>
@@ -482,16 +541,25 @@ export default function CheckoutPage() {
                         it.unitPrice ?? it.price ?? it.unit_price ?? it.unitprice ?? 0;
 
                       return (
-                        <li key={`${it.productId}-${it.color}-${it.size}`} className="flex items-center gap-4 py-3">
+                        <li
+                          key={`${it.productId}-${it.color}-${it.size}`}
+                          className="flex items-center gap-4 py-3"
+                        >
                           <div className="h-16 w-16 overflow-hidden rounded-md border">
                             {img ? (
-                              <img src={img} alt={it.name} className="h-full w-full object-cover" />
+                              <img
+                                src={img}
+                                alt={it.name}
+                                className="h-full w-full object-cover"
+                              />
                             ) : (
                               <div className="h-full w-full bg-zinc-100" />
                             )}
                           </div>
                           <div className="flex-1 text-sm">
-                            <div className="font-medium text-zinc-900">{it.name}</div>
+                            <div className="font-medium text-zinc-900">
+                              {it.name}
+                            </div>
                             <div className="text-zinc-500">
                               {it.color}/{it.size} × {it.quantity}
                             </div>
@@ -519,16 +587,25 @@ export default function CheckoutPage() {
                             it.unitPrice ?? it.price ?? it.unit_price ?? it.unitprice ?? 0;
 
                           return (
-                            <li key={`${it.productId}-${it.color}-${it.size}`} className="flex items-center gap-4 py-3">
+                            <li
+                              key={`${it.productId}-${it.color}-${it.size}`}
+                              className="flex items-center gap-4 py-3"
+                            >
                               <div className="h-16 w-16 overflow-hidden rounded-md border">
                                 {img ? (
-                                  <img src={img} alt={it.name} className="h-full w-full object-cover" />
+                                  <img
+                                    src={img}
+                                    alt={it.name}
+                                    className="h-full w-full object-cover"
+                                  />
                                 ) : (
                                   <div className="h-full w-full bg-zinc-100" />
                                 )}
                               </div>
                               <div className="flex-1 text-sm">
-                                <div className="font-medium text-zinc-900">{it.name}</div>
+                                <div className="font-medium text-zinc-900">
+                                  {it.name}
+                                </div>
                                 <div className="text-zinc-500">
                                   {it.color}/{it.size} × {it.quantity}
                                 </div>
@@ -557,7 +634,6 @@ export default function CheckoutPage() {
                   {money(orderDetail?.total ?? cartTotal)}
                 </span>
               </div>
-              {/* สามารถเพิ่มส่วนลด/ค่าส่งภายหลังได้ */}
               <div className="mt-3 h-px bg-zinc-200" />
 
               {!order ? (
@@ -583,32 +659,45 @@ export default function CheckoutPage() {
                       />
                     </div>
                     <div className="mt-2 text-xs text-zinc-600">
-                      PromptPay: <span className="font-mono">{orderDetail?.promptpayTarget || order.promptpayTarget}</span>
+                      PromptPay:{" "}
+                      <span className="font-mono">
+                        {orderDetail?.promptpayTarget || order.promptpayTarget}
+                      </span>
                     </div>
                     <div className="text-sm">
                       ยอดชำระ: <b>{money(orderDetail?.total ?? order.total)}</b>
                     </div>
                     <div className="mt-1">
-                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                        timeLeft < 60
-                          ? "bg-rose-100 text-rose-700"
-                          : "bg-amber-100 text-amber-800"
-                      }`}>
-                        หมดอายุ: {Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, "0")} นาที
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                          timeLeft < 60
+                            ? "bg-rose-100 text-rose-700"
+                            : "bg-amber-100 text-amber-800"
+                        }`}
+                      >
+                        หมดอายุ: {Math.floor(timeLeft / 60)}:
+                        {String(timeLeft % 60).padStart(2, "0")} นาที
                       </span>
                     </div>
                   </div>
 
-                  {/* Banner ตามสถานะ */}
+                  {/* Banner */}
                   <Banner tone={banner.tone} text={banner.text} />
 
                   {/* Upload slip */}
                   <form onSubmit={uploadSlip} className="space-y-3">
-                    <div className={`${!canUploadSlip ? "opacity-60 pointer-events-none" : ""}`}>
+                    <div
+                      className={`${
+                        !canUploadSlip ? "opacity-60 pointer-events-none" : ""
+                      }`}
+                    >
                       <label className="mb-1 block text-sm font-medium">
                         อัปโหลดสลิปโอนเงิน
                         {disabledReason && (
-                          <span className="text-rose-600"> ({disabledReason})</span>
+                          <span className="text-rose-600">
+                            {" "}
+                            ({disabledReason})
+                          </span>
                         )}
                       </label>
                       <input
@@ -687,6 +776,8 @@ function Banner({
       ? "bg-amber-50 text-amber-800 border-amber-200"
       : "bg-rose-50 text-rose-700 border-rose-200";
   return (
-    <div className={`border rounded-md px-3 py-2 text-sm ${toneClass}`}>{text}</div>
+    <div className={`border rounded-md px-3 py-2 text-sm ${toneClass}`}>
+      {text}
+    </div>
   );
 }

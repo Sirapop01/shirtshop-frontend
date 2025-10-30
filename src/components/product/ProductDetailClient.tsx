@@ -135,7 +135,7 @@ export default function ProductDetailClient({ product }: ProductDetailClientProp
       confirmButtonText: "ไปตะกร้า",
       cancelButtonText: "เลือกสินค้าต่อ",
       reverseButtons: true,
-      timer: 1500,
+      timer: 2500,
       showConfirmButton: true,
     });
     if (res.isConfirmed) router.push("/cart");

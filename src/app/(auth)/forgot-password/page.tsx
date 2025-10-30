@@ -4,6 +4,7 @@
 import { useState } from "react";
 import Image from "next/image";
 import { requestPasswordOtp } from "@/lib/auth";
+import HeroLogo from "@/components/home/HeroLogo"; 
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -51,7 +52,7 @@ export default function ForgotPasswordPage() {
       <div className="flex items-center justify-center p-6">
         <form onSubmit={onSubmit} className="w-full max-w-sm xl:max-w-md space-y-4">
           <div className="flex justify-center">
-            <Image src="/logo.png" alt="StyleWhere Logo" width={160} height={48} />
+            <HeroLogo width={160} height={48} />
           </div>
           <h1 className="text-2xl font-bold text-center">Forgot Password</h1>
           <p className="text-sm text-center text-gray-600">
