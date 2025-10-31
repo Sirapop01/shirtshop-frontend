@@ -55,24 +55,27 @@ export async function getMe(): Promise<AuthUser> {
   return data;
 }
 
-/** ส่ง OTP ไปอีเมลเพื่อรีเซ็ตรหัสผ่าน */
 export async function requestPasswordOtp(email: string): Promise<void> {
   await api.post("/api/auth/password/otp", { email });
 }
 
-/** ตรวจสอบ OTP */
-export async function verifyPasswordOtp(email: string, otp: string): Promise<void> {
-  await api.post("/api/auth/password/otp/verify", { email, otp });
+/** รีเซ็ตรหัสผ่านด้วย OTP (สอดคล้องกับ BE) */
+export async function resetPassword(email: string, otp: string, newPassword: string): Promise<void> {
+  await api.post("/api/auth/password/reset", { email, otp, newPassword });
 }
 
-/** รีเซ็ตรหัสผ่านด้วย OTP */
-export async function resetPasswordWithOtp(params: {
-  email: string;
-  otp: string;
+export async function changePassword(params: {
+  currentPassword: string;
   newPassword: string;
-}): Promise<void> {
-  await api.post("/api/auth/password/reset", params);
+}): Promise<{ message: string }> {
+  // ปรับ path ให้ตรงกับ BE ของคุณ ถ้าใช้ตัวอย่างนี้จะเป็น /api/auth/password/change (PUT)
+  const { data } = await api.put<{ message: string }>(
+      "/api/auth/password/change",
+      params
+  );
+  return data;
 }
+
 
 /** (ถ้ามี) รีเฟรชโทเคน */
 export async function refreshTokens(): Promise<Tokens | null> {
