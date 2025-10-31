@@ -344,11 +344,12 @@ export default function TryOnInner() {
             <div
               className={[
                 "relative flex h-60 cursor-pointer items-center justify-center rounded-lg border-2 border-dashed",
-                personPreview
-                  ? "border-transparent"
-                  : "border-gray-300 hover:border-gray-400",
+                personPreview ? "border-transparent" : "border-gray-300 hover:border-gray-400",
               ].join(" ")}
-              onClick={pickFile}
+              onClick={(e) => {
+                // เปิดไฟล์เฉพาะคลิกที่พื้นของกล่อง (ไม่ใช่คลิกที่ปุ่ม/รูป)
+                if (e.target === e.currentTarget) pickFile();
+              }}
               onDrop={onDrop}
               onDragOver={onDragOver}
               role="button"
@@ -364,19 +365,18 @@ export default function TryOnInner() {
               ) : (
                 <div className="text-center">
                   <div className="text-4xl">📷</div>
-                  <div className="mt-1 text-sm text-gray-600">
-                    คลิกเพื่อเลือกไฟล์ หรือวางรูปที่นี่
-                  </div>
-                  <div className="text-[11px] text-gray-400">
-                    รองรับ JPG / PNG / WebP (≤ 8MB)
-                  </div>
+                  <div className="mt-1 text-sm text-gray-600">คลิกเพื่อเลือกไฟล์ หรือวางรูปที่นี่</div>
+                  <div className="text-[11px] text-gray-400">รองรับ JPG / PNG / WebP (≤ 8MB)</div>
                 </div>
               )}
 
               {/* overlay upload pill */}
               <button
                 type="button"
-                onClick={pickFile}
+                onClick={(e) => {
+                  e.stopPropagation(); // <— ป้องกันเด้งไปเรียก onClick ของ parent
+                  pickFile();
+                }}
                 className="absolute bottom-3 right-3 rounded-full bg-black/85 px-3 py-1.5 text-xs font-medium text-white shadow hover:bg-black"
                 title="เลือกไฟล์"
               >
@@ -387,7 +387,11 @@ export default function TryOnInner() {
                 ref={fileInputRef}
                 type="file"
                 accept="image/*"
-                onChange={onFileChange}
+                onChange={(e) => {
+                  onFileChange(e);
+                  // เลือกไฟล์เดิมซ้ำ ๆ ได้ (trigger change every time)
+                  if (fileInputRef.current) fileInputRef.current.value = "";
+                }}
                 className="hidden"
               />
             </div>

@@ -146,25 +146,49 @@ export default function AddressPage() {
     }
   };
 
-  const onDelete = async (id: string) => {
+  const onDelete = (id: string) => {
     if (!id) return;
-    const res = await Swal.fire({
+
+    Swal.fire({
       icon: "warning",
       title: "ลบที่อยู่นี้?",
       showCancelButton: true,
       confirmButtonText: "ลบ",
       cancelButtonText: "ยกเลิก",
+      focusCancel: true,
+      reverseButtons: true,
+    }).then((res) => {
+      if (!res.isConfirmed) return;
+
+      // แสดงกำลังลบ (ไม่ใช้ await)
+      Swal.fire({
+        title: "กำลังลบ...",
+        allowOutsideClick: false,
+        allowEscapeKey: false,
+        didOpen: () => Swal.showLoading(),
+      });
+
+      // ใช้ promise chain แทน await
+      removeAddress(id)
+        .then(() => refresh())
+        .then(() => {
+          Swal.fire({
+            icon: "success",
+            title: "ลบสำเร็จ",
+            timer: 800,
+            showConfirmButton: false,
+          });
+        })
+        .catch((e: any) => {
+          Swal.fire({
+            icon: "error",
+            title: "ลบไม่สำเร็จ",
+            text: e?.message ?? "เกิดข้อผิดพลาด",
+          });
+        });
     });
-    if (!res.isConfirmed) return;
-    Swal.fire({ title: "กำลังลบ...", allowOutsideClick: false, allowEscapeKey: false, didOpen: () => Swal.showLoading() });
-    try {
-      await removeAddress(id);
-      await refresh();
-      Swal.fire({ icon: "success", title: "ลบสำเร็จ", timer: 800, showConfirmButton: false });
-    } catch (e: any) {
-      Swal.fire({ icon: "error", title: "ลบไม่สำเร็จ", text: e?.message ?? "เกิดข้อผิดพลาด" });
-    }
   };
+
 
   const onSetDefault = async (id: string) => {
     if (!id) return;
