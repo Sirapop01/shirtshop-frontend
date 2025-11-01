@@ -1,7 +1,7 @@
-// src/app/(site)/addresses/page.tsx  (หรือไฟล์เดิมของคุณ)
+// src/app/(site)/addresses/page.tsx
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, Suspense } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -10,7 +10,22 @@ import { useAddress } from "@/context/AddressContext";
 import type { Address } from "@/context/AddressContext";
 import { useThaiLocations } from "@/lib/useThaiLocations";
 
-/* ---------------- Schema ---------------- */
+/* ---------- Fallback while suspense ---------- */
+function PageFallback() {
+  return (
+    <main className="mx-auto max-w-5xl px-4 md:px-6 py-8 space-y-6">
+      <div className="h-16 rounded-2xl bg-gray-100 animate-pulse" />
+      <div className="h-64 rounded-2xl bg-gray-100 animate-pulse" />
+      <div className="space-y-3">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="h-24 rounded-2xl bg-gray-100 animate-pulse" />
+        ))}
+      </div>
+    </main>
+  );
+}
+
+/* ========= เดิมทั้งก้อน: ย้ายมาเป็นคอมโพเนนต์ภายใน ========= */
 const schema = z.object({
   fullName: z.string().min(1, "กรุณากรอกชื่อ-นามสกุล"),
   phone: z.string().regex(/^0\d{8,9}$/, "เบอร์โทรไม่ถูกต้อง"),
@@ -29,7 +44,7 @@ const selectCls = inputCls;
 const labelCls = "mb-1 block text-sm font-medium text-gray-700";
 const errorCls = "mt-1 text-xs text-rose-600";
 
-export default function AddressPage() {
+function AddressesContent() {
   const { addresses, addAddress, updateAddress, removeAddress, refresh, setDefault } = useAddress();
 
   const {
@@ -70,7 +85,6 @@ export default function AddressPage() {
   const selectedDistrict = watch("district");
   const selectedSubdistrict = watch("subdistrict");
 
-  /* ---------- Guard เคลียร์ค่าเฉพาะตอนผู้ใช้เปลี่ยนเอง ---------- */
   const hydratingRef = useRef(false);
   const pendingRef = useRef<{ province?: string; district?: string; subdistrict?: string } | null>(null);
 
@@ -89,19 +103,16 @@ export default function AddressPage() {
     }
   }, [selectedDistrict, setValue]);
 
-  // auto ZIP
   useEffect(() => {
     if (!selectedSubdistrict) return;
     const zip = getZipByTambonName(selectedSubdistrict);
     if (zip) setValue("postalCode", zip);
   }, [selectedSubdistrict, getZipByTambonName, setValue]);
 
-  // โหลดรายการจาก backend
   useEffect(() => {
     refresh().catch(() => {});
   }, [refresh]);
 
-  /* ---------- Hydrate: province -> district -> subdistrict ---------- */
   useEffect(() => {
     if (hydratingRef.current && pendingRef.current?.district && selectedProvince) {
       const amphures = getAmphuresOfProvince(selectedProvince);
@@ -126,7 +137,6 @@ export default function AddressPage() {
     }
   }, [selectedDistrict, getTambonsOfAmphure, getZipByTambonName, setValue]);
 
-  /* ---------- Actions ---------- */
   const onSubmit = async (data: FormValues) => {
     Swal.fire({
       title: "กำลังบันทึก...",
@@ -148,7 +158,6 @@ export default function AddressPage() {
 
   const onDelete = (id: string) => {
     if (!id) return;
-
     Swal.fire({
       icon: "warning",
       title: "ลบที่อยู่นี้?",
@@ -160,7 +169,6 @@ export default function AddressPage() {
     }).then((res) => {
       if (!res.isConfirmed) return;
 
-      // แสดงกำลังลบ (ไม่ใช้ await)
       Swal.fire({
         title: "กำลังลบ...",
         allowOutsideClick: false,
@@ -168,27 +176,16 @@ export default function AddressPage() {
         didOpen: () => Swal.showLoading(),
       });
 
-      // ใช้ promise chain แทน await
       removeAddress(id)
         .then(() => refresh())
         .then(() => {
-          Swal.fire({
-            icon: "success",
-            title: "ลบสำเร็จ",
-            timer: 800,
-            showConfirmButton: false,
-          });
+          Swal.fire({ icon: "success", title: "ลบสำเร็จ", timer: 800, showConfirmButton: false });
         })
         .catch((e: any) => {
-          Swal.fire({
-            icon: "error",
-            title: "ลบไม่สำเร็จ",
-            text: e?.message ?? "เกิดข้อผิดพลาด",
-          });
+          Swal.fire({ icon: "error", title: "ลบไม่สำเร็จ", text: e?.message ?? "เกิดข้อผิดพลาด" });
         });
     });
   };
-
 
   const onSetDefault = async (id: string) => {
     if (!id) return;
@@ -202,7 +199,6 @@ export default function AddressPage() {
     }
   };
 
-  /* ---------- Options ---------- */
   const amphures = selectedProvince ? getAmphuresOfProvince(selectedProvince) : [];
   const tambons = selectedDistrict ? getTambonsOfAmphure(selectedDistrict) : [];
   const currentDefault = addresses.find((a) => a.isDefault);
@@ -215,7 +211,6 @@ export default function AddressPage() {
         <p className="mt-1 text-sm text-gray-500">เพิ่ม/แก้ไขที่อยู่และกำหนดค่าเริ่มต้นสำหรับการสั่งซื้อ</p>
       </section>
 
-      {/* Default address hint */}
       {currentDefault && (
         <section className="rounded-2xl border border-emerald-200 bg-emerald-50 px-6 py-4 text-sm text-emerald-800">
           <div className="font-medium">ที่อยู่ค่าเริ่มต้นปัจจุบัน</div>
@@ -227,6 +222,7 @@ export default function AddressPage() {
         </section>
       )}
 
+      {/* แจ้งเตือนโหลดตำแหน่ง */}
       {locError && (
         <section className="rounded-2xl border border-amber-200 bg-amber-50 px-6 py-4 text-sm text-amber-800">
           โหลดข้อมูลจังหวัด/อำเภอ/ตำบลจากอินเทอร์เน็ตไม่สำเร็จ—กำลังใช้ข้อมูลออฟไลน์
@@ -237,7 +233,8 @@ export default function AddressPage() {
       <section className="rounded-2xl border border-gray-200 bg-white shadow-sm px-6 py-5">
         {editing && (
           <div className="mb-3 inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-800">
-            กำลังแก้ไขที่อยู่เดิม — <button
+            กำลังแก้ไขที่อยู่เดิม —{" "}
+            <button
               type="button"
               className="underline hover:no-underline"
               onClick={() => {
@@ -297,7 +294,7 @@ export default function AddressPage() {
               <option value="">
                 {!selectedProvince ? "เลือกจังหวัดก่อน" : locLoading ? "กำลังโหลด..." : "-- เลือกอำเภอ/เขต --"}
               </option>
-              {amphures.map((d) => (
+              {getAmphuresOfProvince(selectedProvince).map((d) => (
                 <option key={d.id} value={String(d.id)}>
                   {d.name_th}
                 </option>
@@ -312,7 +309,7 @@ export default function AddressPage() {
               <option value="">
                 {!selectedDistrict ? "เลือกอำเภอ/เขตก่อน" : locLoading ? "กำลังโหลด..." : "-- เลือกตำบล/แขวง --"}
               </option>
-              {tambons.map((s) => (
+              {getTambonsOfAmphure(selectedDistrict).map((s) => (
                 <option key={s.id} value={s.name_th}>
                   {s.name_th}
                 </option>
@@ -448,5 +445,14 @@ export default function AddressPage() {
         )}
       </section>
     </main>
+  );
+}
+
+/* ---------- ครอบทั้งหน้าด้วย Suspense (แก้ error) ---------- */
+export default function AddressesPage() {
+  return (
+    <Suspense fallback={<PageFallback />}>
+      <AddressesContent />
+    </Suspense>
   );
 }

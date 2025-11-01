@@ -1,18 +1,16 @@
 // src/app/(site)/tryon/tryon-inner.tsx
 "use client";
 
-import { useMemo, useState, useRef, useEffect, DragEvent } from "react";
+import { useMemo, useState, useRef, useEffect, DragEvent, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 
 type TryOnSuccess = { imageBase64?: string; resultBase64?: string };
 type SpringError = { message?: string; error?: string };
 
-const BACKEND =
-  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
+const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
 
 /* ===================== utils ===================== */
-const stripPrefix = (s: string) =>
-  s.replace(/^data:image\/[a-zA-Z0-9+.+-]+;base64,/, "");
+const stripPrefix = (s: string) => s.replace(/^data:image\/[a-zA-Z0-9+.+-]+;base64,/, "");
 
 async function resizeToDataURL(
   fileOrBlob: File | Blob,
@@ -48,9 +46,7 @@ async function fetchImageBlob(url: string): Promise<Blob> {
   return await res.blob();
 }
 
-async function fileToBase64Resized(
-  file: File
-): Promise<{ base64: string; preview: string }> {
+async function fileToBase64Resized(file: File): Promise<{ base64: string; preview: string }> {
   const dataUrl = await resizeToDataURL(file, 1280, "image/jpeg", 0.9);
   return { base64: stripPrefix(dataUrl), preview: dataUrl };
 }
@@ -61,12 +57,10 @@ async function urlToBase64Resized(url: string): Promise<string> {
 }
 
 const fmtElapsed = (sec: number) =>
-  `${Math.floor(sec / 60).toString().padStart(2, "0")}:${(sec % 60)
-    .toString()
-    .padStart(2, "0")}`;
+  `${Math.floor(sec / 60).toString().padStart(2, "0")}:${(sec % 60).toString().padStart(2, "0")}`;
 
-/* ===================== page ===================== */
-export default function TryOnInner() {
+/* ===================== content (มี useSearchParams อยู่ในนี้) ===================== */
+function TryOnContent() {
   const sp = useSearchParams();
   const router = useRouter();
 
@@ -159,9 +153,7 @@ export default function TryOnInner() {
     if (!personImageBase64) return setErrText("กรุณาอัปโหลดรูปของคุณก่อน");
 
     if (!BACKEND) {
-      setErrText(
-        "Backend base URL ว่าง กรุณาตั้งค่า NEXT_PUBLIC_BACKEND_URL"
-      );
+      setErrText("Backend base URL ว่าง กรุณาตั้งค่า NEXT_PUBLIC_BACKEND_URL");
       return;
     }
 
@@ -235,9 +227,6 @@ export default function TryOnInner() {
       <div className="mb-6 rounded-2xl bg-gradient-to-tr from-gray-900 via-gray-800 to-gray-700 px-5 py-5 text-white shadow-md md:flex md:items-center md:justify-between">
         <div>
           <h1 className="text-xl font-semibold md:text-2xl">Virtual Try-On</h1>
-          <p className="mt-1 text-sm text-gray-200">
-            อัปโหลดรูปของคุณ แล้วระบบจะผสมกับเสื้อที่เลือกให้โดยอัตโนมัติ
-          </p>
         </div>
         <div className="mt-3 flex items-center gap-3 md:mt-0">
           <button
@@ -260,15 +249,9 @@ export default function TryOnInner() {
 
       {/* step pills */}
       <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
-        <span className="rounded-full bg-gray-900 px-2.5 py-1 font-medium text-white">
-          1 เลือกเสื้อ
-        </span>
-        <span className="rounded-full bg-gray-200 px-2.5 py-1 font-medium">
-          2 อัปโหลดรูปคุณ
-        </span>
-        <span className="rounded-full bg-gray-200 px-2.5 py-1 font-medium">
-          3 ประมวลผล & ดาวน์โหลด
-        </span>
+        <span className="rounded-full bg-gray-900 px-2.5 py-1 font-medium text-white">1 เลือกเสื้อ</span>
+        <span className="rounded-full bg-gray-200 px-2.5 py-1 font-medium">2 อัปโหลดรูปคุณ</span>
+        <span className="rounded-full bg-gray-200 px-2.5 py-1 font-medium">3 ประมวลผล & ดาวน์โหลด</span>
         <span className="ml-auto text-gray-500">
           {loading ? (
             <>
@@ -289,15 +272,9 @@ export default function TryOnInner() {
           {/* garment */}
           <div className="rounded-xl border border-gray-200 p-3">
             <div className="mb-2 flex items-center justify-between">
-              <div className="text-sm font-semibold text-gray-700">
-                เสื้อที่เลือก
-              </div>
+              <div className="text-sm font-semibold text-gray-700">เสื้อที่เลือก</div>
               {garmentUrl && (
-                <a
-                  href={garmentUrl}
-                  target="_blank"
-                  className="text-xs text-blue-600 hover:underline"
-                >
+                <a href={garmentUrl} target="_blank" className="text-xs text-blue-600 hover:underline">
                   เปิดรูป
                 </a>
               )}
@@ -316,26 +293,17 @@ export default function TryOnInner() {
               </div>
             )}
             <details className="mt-2 text-xs text-gray-600">
-              <summary className="cursor-pointer select-none">
-                แสดง URL ของเสื้อ
-              </summary>
-              <div className="mt-1 break-words rounded-lg border border-gray-200 bg-gray-50 p-2">
-                {garmentUrl || "-"}
-              </div>
+              <summary className="cursor-pointer select-none">แสดง URL ของเสื้อ</summary>
+              <div className="mt-1 break-words rounded-lg border border-gray-200 bg-gray-50 p-2">{garmentUrl || "-"}</div>
             </details>
           </div>
 
           {/* person + upload */}
           <div className="rounded-xl border border-gray-200 p-3">
             <div className="mb-2 flex items-center justify-between">
-              <div className="text-sm font-semibold text-gray-700">
-                รูปของคุณ
-              </div>
+              <div className="text-sm font-semibold text-gray-700">รูปของคุณ</div>
               {personImageBase64 && (
-                <button
-                  onClick={onReset}
-                  className="text-xs text-gray-600 hover:text-gray-800"
-                >
+                <button onClick={onReset} className="text-xs text-gray-600 hover:text-gray-800">
                   รีเซ็ต
                 </button>
               )}
@@ -357,11 +325,7 @@ export default function TryOnInner() {
               tabIndex={0}
             >
               {personPreview ? (
-                <img
-                  src={personPreview}
-                  alt="person preview"
-                  className="mx-auto max-h-60 w-auto rounded-lg object-contain"
-                />
+                <img src={personPreview} alt="person preview" className="mx-auto max-h-60 w-auto rounded-lg object-contain" />
               ) : (
                 <div className="text-center">
                   <div className="text-4xl">📷</div>
@@ -374,7 +338,7 @@ export default function TryOnInner() {
               <button
                 type="button"
                 onClick={(e) => {
-                  e.stopPropagation(); // <— ป้องกันเด้งไปเรียก onClick ของ parent
+                  e.stopPropagation(); // กันการเด้งไปเรียก onClick ของ parent
                   pickFile();
                 }}
                 className="absolute bottom-3 right-3 rounded-full bg-black/85 px-3 py-1.5 text-xs font-medium text-white shadow hover:bg-black"
@@ -411,9 +375,7 @@ export default function TryOnInner() {
             disabled={loading || !garmentUrl || !personImageBase64}
             className={[
               "inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold transition",
-              loading || !garmentUrl || !personImageBase64
-                ? "bg-gray-300 text-gray-600"
-                : "bg-black text-white hover:bg-gray-800",
+              loading || !garmentUrl || !personImageBase64 ? "bg-gray-300 text-gray-600" : "bg-black text-white hover:bg-gray-800",
             ].join(" ")}
           >
             {loading ? (
@@ -430,10 +392,7 @@ export default function TryOnInner() {
           {loading && (
             <div className="flex-1">
               <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
-                <div
-                  className="h-2 rounded-full bg-gray-900 transition-[width] duration-300"
-                  style={{ width: `${Math.round(progress)}%` }}
-                />
+                <div className="h-2 rounded-full bg-gray-900 transition-[width] duration-300" style={{ width: `${Math.round(progress)}%` }} />
               </div>
               <div className="mt-1 text-xs text-gray-500">
                 ใช้เวลา {fmtElapsed(elapsed)} • {Math.round(progress)}%
@@ -443,11 +402,7 @@ export default function TryOnInner() {
         </div>
 
         {/* error */}
-        {errText && (
-          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-            {errText}
-          </div>
-        )}
+        {errText && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{errText}</div>}
 
         {/* result */}
         {imgBase64 && (
@@ -455,31 +410,44 @@ export default function TryOnInner() {
             <div className="mb-2 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-gray-700">ผลลัพธ์</h2>
               <div className="flex items-center gap-2">
-                <a
-                  className="text-xs text-blue-600 hover:underline"
-                  download="tryon_result.png"
-                  href={`data:image/png;base64,${imgBase64}`}
-                >
+                <a className="text-xs text-blue-600 hover:underline" download="tryon_result.png" href={`data:image/png;base64,${imgBase64}`}>
                   ดาวน์โหลด PNG
                 </a>
-                <button
-                  onClick={() => setImgBase64(null)}
-                  className="text-xs text-gray-600 hover:underline"
-                >
+                <button onClick={() => setImgBase64(null)} className="text-xs text-gray-600 hover:underline">
                   ลองใหม่
                 </button>
               </div>
             </div>
             <div className="rounded-xl border border-gray-200 p-2">
-              <img
-                alt="try-on result"
-                src={`data:image/png;base64,${imgBase64}`}
-                className="mx-auto max-h-[70vh] w-auto rounded-lg object-contain"
-              />
+              <img alt="try-on result" src={`data:image/png;base64,${imgBase64}`} className="mx-auto max-h-[70vh] w-auto rounded-lg object-contain" />
             </div>
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+/* ===================== Suspense wrapper (แก้ error useSearchParams) ===================== */
+function TryOnFallback() {
+  return (
+    <div className="mx-auto max-w-6xl px-4 py-6 md:py-8">
+      <div className="mb-6 h-24 rounded-2xl bg-gray-100 animate-pulse" />
+      <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+        <div className="grid gap-5 md:grid-cols-2">
+          <div className="h-60 rounded-xl bg-gray-100 animate-pulse" />
+          <div className="h-60 rounded-xl bg-gray-100 animate-pulse" />
+        </div>
+        <div className="mt-6 h-8 rounded-xl bg-gray-100 animate-pulse" />
+      </div>
+    </div>
+  );
+}
+
+export default function TryOnInner() {
+  return (
+    <Suspense fallback={<TryOnFallback />}>
+      <TryOnContent />
+    </Suspense>
   );
 }
