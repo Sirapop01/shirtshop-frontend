@@ -2,27 +2,33 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import Image from "next/image";
+import { useSearchParams, useRouter } from "next/navigation";
+import HeroLogo from "@/components/home/HeroLogo";
 import { requestPasswordOtp, resetPassword } from "@/lib/auth";
 
-export default function ResetPasswordClient({ initialEmail = "" }: { initialEmail?: string }) {
+export default function ResetPasswordClient() {
   const router = useRouter();
-  const [email, setEmail] = useState(initialEmail);
+  const sp = useSearchParams();
+  const emailFromQuery = (sp.get("email") || "").trim();
+
+  const [email, setEmail] = useState(emailFromQuery);
   const [otp, setOtp] = useState("");
-  const [newPassword, setNewPassword] = useState("");
+  const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [cooldown, setCooldown] = useState(0);
-  const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
+
+  const emailLocked = !!emailFromQuery;
 
   useEffect(() => {
-    // ซิงก์กรณีเปลี่ยน URL ภายนอก
-    if (initialEmail && initialEmail !== email) setEmail(initialEmail);
+    if (emailFromQuery && emailFromQuery !== email) setEmail(emailFromQuery);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialEmail]);
+  }, [emailFromQuery]);
 
   const startCooldown = (sec = 60) => {
     setCooldown(sec);
@@ -36,9 +42,9 @@ export default function ResetPasswordClient({ initialEmail = "" }: { initialEmai
   const onResend = async () => {
     if (!email) return setErr("กรุณากรอกอีเมล");
     try {
-      setErr(null); setMsg(null); setSending(true);
+      setErr(null); setOk(null); setSending(true);
       await requestPasswordOtp(email);
-      setMsg("ส่ง OTP ใหม่ไปที่อีเมลแล้ว");
+      setOk("ส่ง OTP ใหม่ไปที่อีเมลแล้ว");
       startCooldown(60);
     } catch (e: any) {
       const m = e?.response?.data?.message ?? "ส่ง OTP ใหม่ไม่สำเร็จ";
@@ -48,21 +54,23 @@ export default function ResetPasswordClient({ initialEmail = "" }: { initialEmai
     }
   };
 
-  const strongEnough = useMemo(() => newPassword.length >= 8, [newPassword]);
+  const canSubmit = useMemo(() => {
+    if (!email) return false;
+    if (!otp || otp.length !== 6) return false;
+    if (password.length < 8) return false;
+    if (password !== confirm) return false;
+    return true;
+  }, [email, otp, password, confirm]);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setErr(null); setMsg(null);
-
-    if (!email) return setErr("กรุณากรอกอีเมล");
-    if (!otp || otp.length !== 6) return setErr("กรุณากรอก OTP 6 หลัก");
-    if (!strongEnough) return setErr("รหัสผ่านใหม่อย่างน้อย 8 ตัวอักษร");
-    if (newPassword !== confirm) return setErr("รหัสผ่านใหม่และยืนยันไม่ตรงกัน");
+    setErr(null); setOk(null);
+    if (!canSubmit) return;
 
     try {
       setLoading(true);
-      await resetPassword(email, otp, newPassword);
-      setMsg("รีเซ็ตรหัสผ่านสำเร็จ! กำลังพาไปหน้าเข้าสู่ระบบ...");
+      await resetPassword(email, otp, password);
+      setOk("ตั้งรหัสผ่านใหม่เรียบร้อยแล้ว กำลังพาไปหน้า Login…");
       setTimeout(() => router.push("/login"), 1200);
     } catch (e: any) {
       const m = e?.response?.data?.message ?? "รีเซ็ตรหัสผ่านไม่สำเร็จ";
@@ -73,89 +81,142 @@ export default function ResetPasswordClient({ initialEmail = "" }: { initialEmai
   };
 
   return (
-    <div className="max-w-md mx-auto p-6">
-      <h1 className="text-2xl font-semibold mb-2">Reset Password</h1>
-      <p className="text-gray-600 text-sm mb-4">กรอกอีเมล, OTP และรหัสผ่านใหม่</p>
+    <div className="grid min-h-screen grid-cols-1 xl:grid-cols-2">
+      {/* ซ้าย: ภาพพื้นหลัง (เหมือนหน้า forgot) */}
+      <div className="relative hidden xl:block xl:min-h-screen overflow-hidden">
+        <Image src="/loginbg.png" alt="Background" fill className="object-cover" priority />
+      </div>
 
-      {err && <div className="mb-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
-      {msg && <div className="mb-3 rounded-md bg-green-50 px-3 py-2 text-sm text-green-700">{msg}</div>}
+      {/* ขวา: ฟอร์ม (ธีมเดียวกับ forgot) */}
+      <div className="flex items-center justify-center p-6">
+        <form onSubmit={onSubmit} className="w-full max-w-sm xl:max-w-md space-y-4">
+          <div className="flex justify-center">
+            <HeroLogo width={160} height={48} />
+          </div>
 
-      <form onSubmit={onSubmit} className="space-y-3">
-        <div>
-          <label className="block mb-1 text-sm">อีเมล</label>
-          <input
-            type="email"
-            className="w-full border rounded px-3 py-2"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-            autoComplete="email"
-            required
-          />
-        </div>
+          <h1 className="text-2xl font-bold text-center">Reset Password</h1>
+          <p className="text-sm text-center text-gray-600">
+            กรอกอีเมล (ถูกล็อกถ้ามาจากหน้า Forgot), รหัส OTP และตั้งรหัสผ่านใหม่
+          </p>
 
-        <div className="flex gap-2 items-end">
-          <div className="flex-1">
-            <label className="block mb-1 text-sm">OTP</label>
+          {err && (
+            <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+              {err}
+            </div>
+          )}
+          {ok && (
+            <div className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-700">
+              {ok}
+            </div>
+          )}
+
+          {/* Email */}
+          <div>
+            <label className="mb-1 block">Email</label>
+            <input
+              type="email"
+              className={[
+                "w-full border p-2 rounded",
+                emailLocked ? "bg-gray-100 text-gray-600 cursor-not-allowed" : ""
+              ].join(" ")}
+              placeholder="you@example.com"
+              value={email}
+              onChange={emailLocked ? undefined : (e) => setEmail(e.target.value)}
+              autoComplete="email"
+              required
+              readOnly={emailLocked}
+              aria-readonly={emailLocked}
+              title={emailLocked ? "อีเมลถูกส่งมาจากหน้า Forgot" : "กรอกอีเมลของคุณ"}
+            />
+          </div>
+
+          {/* OTP + resend */}
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <label className="block">OTP</label>
+              <button
+                type="button"
+                disabled={sending || cooldown > 0}
+                onClick={onResend}
+                className="rounded border px-3 py-1.5 text-sm disabled:opacity-60 cursor-pointer disabled:cursor-not-allowed bg-blue-600 text-white hover:bg-blue-700 transition"
+              >
+                {cooldown > 0 ? `ส่งใหม่ใน ${cooldown}s` : (sending ? "กำลังส่ง..." : "ส่งใหม่")}
+              </button>
+            </div>
             <input
               type="text"
-              inputMode="numeric"
-              maxLength={6}
-              className="w-full border rounded px-3 py-2"
+              className="w-full border p-2 rounded"
+              placeholder="6-digit code"
               value={otp}
               onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
-              placeholder="6 หลัก"
+              inputMode="numeric"
+              maxLength={6}
               required
             />
           </div>
+
+          {/* New Password */}
+          <div>
+            <label className="mb-1 block">New Password</label>
+            <input
+              type="password"
+              className="w-full border p-2 rounded"
+              placeholder="อย่างน้อย 8 ตัวอักษร"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="new-password"
+              minLength={8}
+              required
+            />
+            {/* แถบความแข็งแรงแบบเรียบง่ายให้โทนเดียวกับ forgot */}
+            <div className="mt-2 h-1 w-full rounded bg-gray-200 overflow-hidden">
+              <div
+                className="h-1 transition-[width] duration-300 bg-blue-600"
+                style={{
+                  width: `${Math.min(100, [
+                    password.length >= 8,
+                    /[A-Z]/.test(password),
+                    /[a-z]/.test(password),
+                    /[0-9]/.test(password),
+                    /[^A-Za-z0-9]/.test(password),
+                  ].filter(Boolean).length * 20)}%`,
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Confirm Password */}
+          <div>
+            <label className="mb-1 block">Confirm Password</label>
+            <input
+              type="password"
+              className="w-full border p-2 rounded"
+              placeholder="พิมพ์รหัสผ่านอีกครั้ง"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              autoComplete="new-password"
+              minLength={8}
+              required
+            />
+            {confirm.length > 0 && confirm !== password && (
+              <p className="text-xs text-red-600 mt-1">รหัสผ่านยืนยันไม่ตรงกัน</p>
+            )}
+          </div>
+
+          {/* Submit */}
           <button
-            type="button"
-            disabled={sending || cooldown > 0}
-            onClick={onResend}
-            className="border rounded px-3 py-2 text-sm disabled:opacity-60"
+            type="submit"
+            disabled={loading || !canSubmit}
+            className="w-full border p-2 rounded disabled:opacity-60 cursor-pointer disabled:cursor-not-allowed bg-blue-600 text-white hover:bg-blue-700 transition"
           >
-            {cooldown > 0 ? `ส่งใหม่ใน ${cooldown}s` : sending ? "กำลังส่ง..." : "ส่งใหม่"}
+            {loading ? "Resetting..." : "Reset Password"}
           </button>
-        </div>
 
-        <div>
-          <label className="block mb-1 text-sm">รหัสผ่านใหม่</label>
-          <input
-            type="password"
-            className="w-full border rounded px-3 py-2"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            placeholder="อย่างน้อย 8 ตัวอักษร"
-            minLength={8}
-            autoComplete="new-password"
-            required
-          />
-        </div>
-
-        <div>
-          <label className="block mb-1 text-sm">ยืนยันรหัสผ่านใหม่</label>
-          <input
-            type="password"
-            className="w-full border rounded px-3 py-2"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            minLength={8}
-            autoComplete="new-password"
-            required
-          />
-          {confirm.length > 0 && confirm !== newPassword && (
-            <p className="text-xs text-red-600 mt-1">รหัสผ่านใหม่และยืนยันไม่ตรงกัน</p>
-          )}
-        </div>
-
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full bg-black text-white py-2 rounded disabled:opacity-60"
-        >
-          {loading ? "กำลังรีเซ็ต..." : "ยืนยันเปลี่ยนรหัสผ่าน"}
-        </button>
-      </form>
+          <div className="text-center text-sm">
+            <a href="/login" className="underline">Back to Login</a>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
