@@ -89,8 +89,16 @@ export default function Login() {
       router.replace("/");
       router.refresh();
     } catch (error: any) {
-      setErr(error?.message || "เกิดข้อผิดพลาด");
-    } finally {
+        const data = error?.response?.data;
+        // รองรับได้ทั้งรูปแบบ {message}, {error}, string, หรือไม่มีอะไรเลย
+        const msg =
+          (typeof data === "string" && data) ||
+          data?.message ||
+          data?.error ||
+          error?.message ||
+          "อีเมลหรือรหัสผ่านไม่ถูกต้อง";
+        setErr(msg);
+      } finally {
       setLoading(false);
     }
   };
